@@ -1,0 +1,416 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'Application Environment'
+
+Parameters:
+
+  AllowedCIDR:
+    Description: 'IPs allowed to connect'
+    Type: String
+    Default: '0.0.0.0/0'
+
+  AmiId:
+    Description: 'The AMI used by the EC2 instance'
+    Type: String
+
+  AppServerInstanceType:
+    Description: 'The type of EC2 instance used for app servers'
+    Type: String
+
+  AsgMinSize:
+    Description: 'The minimum number of instances active within an Auto Scaling Group'
+    Type: Number
+    Default: 1
+
+  AsgMaxSize:
+    Description: 'The minimum number of instances active within an Auto Scaling Group'
+    Type: Number
+    Default: 1
+
+  ConfigBucketArn:
+    Description: 'ARN of S3 bucket that stores configuration files'
+    Type: String
+
+  DatabaseTemplate:
+    Description: 'The key for the correct version of the db template'
+    Type: String
+
+  DbClass:
+    Description: 'Database instance class'
+    Type: String
+
+  DbAdminUserName:
+    Description: 'Database admin user name'
+    Type: String
+    MaxLength: 32
+
+  DbAdminUserPassword:
+    Description: 'Database admin user password'
+    Type: String
+    MinLength: 12
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  DbStorage:
+    Description: 'Amount of storage provisioned'
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  DbBackupRetention:
+    Description: 'Number of backups to retain'
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  DbMultiAZ:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  EC2KeyPair:
+    Description: 'The SSH key pair in your account to use for all other EC2 instance logins'
+    Type: String
+
+  Environment:
+    Description: 'Which environment are we building'
+    Type: String
+    Default: dev
+    AllowedValues:
+      - prod
+      - stage
+      - test
+      - dev
+
+  ErrorTopic:
+    Description: 'SNS topic for errors'
+    Type: String
+
+  LogRetentionInDays:
+    Description: 'Length of time that logs will be retained'
+    Type: Number
+
+  NotificationTopic:
+    Description: 'SNS topic used for notifications'
+    Type: String
+
+  ProjectName:
+    Description: 'A short (max 12 chars) project identifier'
+    Type: String
+    MaxLength: 12
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: 'Project name is limited to 12 alphanumeric characters'
+
+  RootVolSizeGB:
+    Description: 'Size of the root volume of an app server'
+    Type: Number
+    Default: 10
+
+  StackBaseUrl:
+    Description: 'S3 bucket containing CF templates'
+    Type: String
+
+Mappings:
+
+  Constants:
+    ValueOf:
+      TemplateTimeout: 45
+
+Resources:
+
+  AppServerLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: !Ref LogRetentionInDays
+
+  AutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    DependsOn: AppDB
+    Properties:
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: !Ref AsgMinSize
+      MaxSize: !Ref AsgMaxSize
+      DesiredCapacity: !Ref AsgMinSize
+      Cooldown: 60
+#      HealthCheckType: 'ELB'
+      HealthCheckType: 'EC2'
+      HealthCheckGracePeriod: 600
+#      TargetGroupARNs:
+#        - !Ref TargetGroup
+      VPCZoneIdentifier:
+        - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-app-subnet-1'
+        - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-app-subnet-2'
+      MetricsCollection:
+        - Granularity: '1Minute'
+      NotificationConfigurations:
+        - TopicARN:
+            Ref: NotificationTopic
+          NotificationTypes:
+          - 'autoscaling:EC2_INSTANCE_LAUNCH'
+          - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+        - TopicARN:
+            Ref: ErrorTopic
+          NotificationTypes:
+          - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+      Tags:
+        - PropagateAtLaunch: true
+          Value: !Sub '${ProjectName} ${Environment} App Server'
+          Key: Name
+      TerminationPolicies:
+        - OldestInstance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        PauseTime: PT30M
+        WaitOnResourceSignals: true
+        MinInstancesInService: 1
+
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      KeyName: !Ref EC2KeyPair
+      ImageId: !Ref AmiId
+      SecurityGroups:
+        - !Ref ServerSecurityGroup
+      InstanceType: !Ref AppServerInstanceType
+      IamInstanceProfile: !Ref ServerProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          hostnamectl set-hostname "${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)"
+          yum install -y epel-release
+          yum install -y awscli
+          echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
+          service sshd restart
+          /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          cp -v /usr/lib/python2*/site-packages/aws_cfn_bootstrap*/init/redhat/cfn-hup /etc/init.d
+          chmod +x /etc/init.d/cfn-hup
+          /opt/aws/bin/cfn-init -v -c server --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          server:
+            - "base"
+        base:
+          files:
+            '/etc/cron.d/cloudwatch':
+              mode: '000644'
+              content: |
+                */5 * * * * root /opt/aws-scripts-mon/mon-put-instance-data.pl --mem-used --mem-util --swap-used --disk-space-util --disk-path=/ --auto-scaling --from-cron
+            '/etc/cron.d/updates':
+              mode: '000644'
+              content: |
+                15 * * * * root yum -y update
+            '/tmp/cloudwatchlog.conf':
+              content: !Sub |
+                [general]
+                state_file = /var/awslogs/state/agent-state
+                use_gzip_http_content_encoding = true
+                logging_config_file = /var/awslogs/etc/awslogs.conf
+                [/var/log/audit/audit.log]
+                file = /var/log/audit/audit.log
+                log_stream_name = {instance_id}-/var/log/audit/audit.log
+                log_group_name = ${AppServerLogGroup}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}-/var/log/messages
+                log_group_name = ${AppServerLogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}-/var/log/secure
+                log_group_name = ${AppServerLogGroup}
+            '/tmp/config-monitoring':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                yum -y install zip unzip perl-Switch perl-DateTime perl-Sys-Syslog perl-LWP-Protocol-https perl-Digest-SHA
+                cd /opt
+                curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
+                unzip CloudWatchMonitoringScripts-1.2.1.zip
+                rm CloudWatchMonitoringScripts-1.2.1.zip
+                curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O
+                python ./awslogs-agent-setup.py -n --region ${AWS::Region} -c /tmp/cloudwatchlog.conf
+                rm -f ./awslogs-agent-setup.py
+                systemctl daemon-reload
+                systemctl start awslogs
+                systemctl enable awslogs
+            '/etc/systemd/system/awslogs.service':
+              content: |
+                [Unit]
+                Description=The CloudWatch Logs agent
+                After=rc-local.service
+
+                [Service]
+                Type=simple
+                Restart=always
+                KillMode=process
+                TimeoutSec=infinity
+                PIDFile=/var/awslogs/state/awslogs.pid
+                ExecStart=/var/awslogs/bin/awslogs-agent-launcher.sh --start --background --pidfile $PIDFILE --user awslogs --chuid awslogs &
+
+                [Install]
+                WantedBy=multi-user.target
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.Server.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --region ${AWS::Region} --resource Server
+                runas=root
+          packages:
+            yum:
+              jq: []
+              postgresql: []
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+          commands:
+            '01_monitoring':
+              command: '/tmp/config-monitoring'
+            '02_update':
+              command: 'yum -y update'
+
+  ServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'App Server Access'
+      VpcId:
+        'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp:
+            'Fn::ImportValue': !Sub '${ProjectName}-management-vpc-cidr'
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedCIDR
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedCIDR
+
+  ServerProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref ServerRole
+
+  ServerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM'
+      Policies:
+        - PolicyName: 'ParamaterStore'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'ssm:*'
+                Resource: '*'
+        - PolicyName: 'ListConfigBucket'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:ListBucket'
+                Resource: !Ref ConfigBucketArn
+        - PolicyName: 'ConfigBucketRead'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub '${ConfigBucketArn}/*'
+        - PolicyName: 'CloudWatchLogs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogStreams'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AppServerLogGroup}:*'
+        - PolicyName: 'CloudWatchInstanceMonitoring'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'cloudwatch:ListMetrics'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+        - PolicyName: 'Notifications'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'SNS:Publish'
+                Resource:
+                  - !Ref ErrorTopic
+                  - !Ref NotificationTopic
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+                - 'ssm.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  AppDB:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Sub '${StackBaseUrl}${DatabaseTemplate}'
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AppId: !Ref ProjectName
+        AllocatedStorage: !Ref DbStorage
+        BackupRetention: !Ref DbBackupRetention
+        DbName: !Sub '${ProjectName}${Environment}'
+        DbClass: !Ref DbClass
+        DbAdminUsername: !Ref DbAdminUserName
+        DbAdminPassword: !Ref DbAdminUserPassword
+        Environment: !Ref Environment
+        ErrorTopic: !Ref ErrorTopic
+        MultiAZDatabase: !Ref DbMultiAZ
+        NotificationTopic: !Ref NotificationTopic
+        ParamPrefix: !Sub '${ProjectName}/${Environment}'

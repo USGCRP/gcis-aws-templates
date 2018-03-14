@@ -1,0 +1,209 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'SSH Bastion Server - v0.0.5'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: 'Application ID'
+        Parameters:
+          - AppId
+      - Label:
+          default: 'Bastion Server Size'
+        Parameters:
+          - InstanceType
+      - Label:
+          default: 'Access'
+        Parameters:
+          - SshKeyPair
+          - AllowedIPs
+      - Label:
+          default: 'Security Monitoring'
+        Parameters:
+          - AwsAgentInstall
+    ParameterLabels:
+      InstanceType:
+        default: 'EC2 instance type'
+      SshKeyPair:
+        default: 'SSH Key Pair'
+      AllowedIPs:
+        default: 'Allowed IPs'
+      AwsAgentInstall:
+        default: 'Install Amazon Inspector Agent?'
+
+Parameters:
+
+  AppId:
+    Description: 'Identifier used to label networking components'
+    Type: String
+    Default: 'services'
+
+  InstanceType:
+    Description: 'Micro or small will work for most groups'
+    Type: String
+    Default: 't2.nano'
+    AllowedValues:
+      - 't2.nano'
+      - 't2.micro'
+      - 't2.small'
+      - 't2.medium'
+
+  SshKeyPair:
+    Description: 'SSH key used for server access'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+
+  # Can limit by adding individual or a range of IPs. Curl-able place to check your IP http://checkip.amazonaws.com/
+  AllowedIPs:
+    Description: 'http://checkip.amazonaws.com'
+    Type: String
+    Default: '0.0.0.0/0'
+
+  AwsAgentInstall:
+    Description: 'Install Amazon Inspector Agent?'
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Mappings:
+
+  # https://aws.amazon.com/amazon-linux-ami/
+  AmiRegionMap:
+    us-east-1:
+      AMI: 'ami-97785bed'
+    us-east-2:
+      AMI: 'ami-f63b1193'
+    us-west-1:
+      AMI: 'ami-824c4ee2'
+    us-west-2:
+      AMI: 'ami-f2d3638a'
+    us-gov-west-1:
+      AMI: 'ami-56f87137'
+
+Resources:
+
+  # https://aws.amazon.com/blogs/startups/securing-ssh-to-amazon-ec2-linux-hosts/
+  BastionInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref SshKeyPair
+      Tags:
+        - Key: Name
+          Value: Bastion Server
+      ImageId: !FindInMap [ AmiRegionMap, !Ref 'AWS::Region', AMI ]
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref ENIProductionBastion
+          DeviceIndex: 0
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource BastionInstance --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource BastionInstance --region ${AWS::Region}
+          echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
+          service sshd restart
+          yum -y update
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              google-authenticator: []
+          files:
+            '/tmp/configure-google-authenticator':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                sed -i 's/#Port 22/Port 22\nPort 443\n/g' /etc/ssh/sshd_config
+                sed -i 's/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/g' /etc/ssh/sshd_config
+                echo -e "\nAuthenticationMethods publickey,keyboard-interactive" >> /etc/ssh/sshd_config
+                sed -i 's/auth       substack     password-auth/#auth       substack     password-auth/g' /etc/pam.d/sshd
+                echo "auth required pam_google_authenticator.so nullok" >> /etc/pam.d/sshd
+                service sshd restart
+            '/tmp/configure-amazon-agent':
+              mode: '00755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                if [ 'false' == '${AwsAgentInstall}' ]; then
+                  exit
+                fi
+                yum -y install curl
+                cd /tmp
+                curl -O https://d1wk0tztpsntt1.cloudfront.net/linux/latest/install
+                bash /tmp/install
+                rm -f /tmp/install
+            '/usr/local/bin/mfa-init':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                google-authenticator -t -d -f -r 3 -R 30 -w 17
+            '/etc/cron.hourly/os-update':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                yum -y update > /dev/null
+            '/etc/cron.weekly/os-reboot':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                reboot
+          commands:
+            'configure-google-authenticator':
+              command: '/tmp/configure-google-authenticator'
+            'install-amazon-agent':
+              command: '/tmp/configure-amazon-agent'
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+  ENIProductionBastion:
+    Type: 'AWS::EC2::NetworkInterface'
+    Properties:
+      SubnetId:
+        'Fn::ImportValue': !Sub '${AppId}-management-dmz-subnet-1'
+      GroupSet:
+        - !Ref SecurityGroupBastion
+      Description: 'Interface for Bastion device'
+
+  EIPBastion:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: 'vpc'
+
+  AssociateEipToBastion:
+    Type: 'AWS::EC2::EIPAssociation'
+    Properties:
+      AllocationId: !GetAtt EIPBastion.AllocationId
+      NetworkInterfaceId: !Ref ENIProductionBastion
+
+  SecurityGroupBastion:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'SG for Bastion Instances'
+      VpcId:
+        'Fn::ImportValue': !Sub '${AppId}-management-vpc'
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedIPs
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedIPs
+
+Outputs:
+
+  ArtifactId:
+    Description: Artifact ID
+    Value: bastion
+
+  ArtifactVersion:
+    Description: Artifact version
+    Value: v0.0.5
+
+  BastionIP:
+    Description: 'The public IP of the bastion'
+    Value: !Ref EIPBastion

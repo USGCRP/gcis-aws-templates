@@ -1,0 +1,362 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'RDS Database - v0.0.8'
+
+Parameters:
+
+  AppId:
+    Description: 'ID used by exports to identify the application'
+    Type: String
+    Default: 'services'
+
+  AllocatedStorage:
+    Default: 5
+    Description: 'The size of the database in Gb'
+    Type: Number
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  BackupRetention:
+    Default: 10
+    Description: 'Number of days for which automated backups are retained. Set to 0 to disable backups'
+    Type: Number
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  DbName:
+    Description: 'Name of the database'
+    Type: String
+    Default: drupal
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: 'Database name must contain 1 to 64 alphanumeric characters'
+
+  DbClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: db.t2.small
+    AllowedValues:
+    - db.t2.small
+    - db.t2.medium
+    - db.t2.large
+    - db.t2.xlarge
+    - db.t2.2xlarge
+    - db.m4.large
+    - db.m4.xlarge
+    - db.m4.2xlarge
+    - db.m4.4xlarge
+    - db.m4.10xlarge
+    - db.m4.16xlarge
+    - db.r4.large
+    - db.r4.xlarge
+    - db.r4.2xlarge
+    - db.r4.4xlarge
+    - db.r4.8xlarge
+    - db.r4.16xlarge
+    ConstraintDescription: 'Must select a valid database instance type'
+
+  DbAdminUsername:
+    Description: 'Master account username'
+    Type: String
+    MaxLength: 32
+    Default: 'dbadmin'
+
+  DbAdminPassword:
+    Description: 'AdminUserPassword'
+    Type: String
+    MinLength: 12
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  Engine:
+    Description: 'RDS Database Engine'
+    Type: String
+    Default: 'postgres'
+    AllowedValues:
+      - 'mariadb'
+      - 'mysql'
+      - 'postgres'
+
+  Environment:
+    Description: 'Type of deployment'
+    Type: String
+    Default: 'dev'
+    AllowedValues:
+      - 'dev'
+      - 'test'
+      - 'stage'
+      - 'prod'
+
+  ErrorTopic:
+    Description: 'SNS topic for errors'
+    Type: String
+
+  MultiAZDatabase:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  NotificationTopic:
+    Description: 'Optional SNS topic for notifications'
+    Type: String
+    Default: ''
+
+  ParamPrefix:
+    Description: 'Optional Parameter Store key name prefix'
+    Type: String
+    Default: ''
+
+  PrivateSubnetAID:
+    Description: 'Private subnet ID'
+    Type: String
+    Default: ''
+
+  PrivateSubnetACIDR:
+    Description: 'Private subnet CIDR'
+    Type: String
+    Default: ''
+
+  PrivateSubnetBID:
+    Description: 'Private subnet ID'
+    Type: String
+    Default: ''
+
+  PrivateSubnetBCIDR:
+    Description: 'Private subnet CIDR'
+    Type: String
+    Default: ''
+
+  ProvisionedIOPs:
+    Description: 'Number of provisioned IOPs'
+    Type: Number
+    Default: 0
+
+  VPCID:
+    Description: 'VPC the RDS instance will be deployed within'
+    Type: String
+    Default: ''
+
+Mappings:
+
+  DBEngineToPort:
+    mariadb:
+      Port: 3306
+    mysql:
+      Port: 3306
+    postgres:
+      Port: 5432
+
+Conditions:
+
+  PrivateSubnetAIDEmpty: !Equals [ '', !Ref PrivateSubnetAID ]
+
+  PrivateSubnetACIDREmpty: !Equals [ '', !Ref PrivateSubnetACIDR ]
+
+  PrivateSubnetBIDEmpty: !Equals [ '', !Ref PrivateSubnetBID ]
+
+  PrivateSubnetBCIDREmpty: !Equals [ '', !Ref PrivateSubnetBCIDR ]
+
+  SendErrors: !Not [ !Equals [ '', !Ref ErrorTopic ] ]
+
+  SendNotifications: !Not [ !Equals [ '', !Ref NotificationTopic ] ]
+
+  UseParamPrefix: !Not [ !Equals [ '', !Ref ParamPrefix ] ]
+
+  UseProvisionedIOPs: !Not [ !Equals [ 0, !Ref ProvisionedIOPs ] ]
+
+  VPCIDEmpty: !Equals [ '', !Ref VPCID ]
+
+  Postgres: !Equals [ 'postgres', !Ref Engine ]
+
+  MySQL: !Equals [ 'mysql', !Ref Engine ]
+
+Resources:
+
+  Db:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      AllocatedStorage: !Ref AllocatedStorage
+      VPCSecurityGroups:
+      - !Ref RDSSecurityGroup
+      DBInstanceClass: !Ref DbClass
+      Engine: !Ref Engine
+      StorageType: !If [ UseProvisionedIOPs, 'io1', 'gp2' ]
+      Iops: !Ref ProvisionedIOPs
+      MultiAZ: !Ref MultiAZDatabase
+      DBParameterGroupName: !If [ Postgres, !Ref PostgresParameterGroup, !If [ MySQL, !Ref MySqlParameterGroup, !Ref 'AWS::NoValue' ] ]
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PreferredBackupWindow: 02:00-03:30
+      BackupRetentionPeriod: !Ref BackupRetention
+      PreferredMaintenanceWindow: sun:04:00-sun:06:00
+      PubliclyAccessible: false
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbAdminUsername
+      MasterUserPassword: !Ref DbAdminPassword
+      StorageEncrypted: true
+    DeletionPolicy: Snapshot
+
+  # Postgres-only security setting to force SSL connections
+  PostgresParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Condition: Postgres
+    Properties:
+      Description: 'Parameter group customizations'
+      Family: 'postgres9.6'
+      Parameters:
+        rds.force_ssl: '1'
+
+  # Set file format to the newer version which is required by Moodle
+  # https://dev.mysql.com/doc/refman/5.6/en/innodb-file-format.html
+  MySqlParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Condition: MySQL
+    Properties:
+      Description: 'Parameter group customizations'
+      Family: 'MySQL5.6'
+      Parameters:
+        innodb_file_format: 'Barracuda'
+        innodb_large_prefix: '1'
+
+  DbErrors:
+    Type: 'AWS::RDS::EventSubscription'
+    Condition: SendErrors
+    Properties:
+      Enabled: true
+      SnsTopicArn: !Ref ErrorTopic
+      SourceType: 'db-instance'
+      SourceIds:
+        - !Ref Db
+      EventCategories:
+        - 'deletion'
+        - 'failover'
+        - 'failure'
+        - 'low storage'
+
+  DbEvents:
+    Type: 'AWS::RDS::EventSubscription'
+    Condition: SendNotifications
+    Properties:
+      Enabled: true
+      SnsTopicArn: !Ref NotificationTopic
+      SourceType: 'db-instance'
+      SourceIds:
+        - !Ref Db
+      EventCategories:
+        - 'availability'
+        - 'backup'
+        - 'configuration change'
+        - 'creation'
+        - 'deletion'
+        - 'failover'
+        - 'failure'
+        - 'low storage'
+        - 'maintenance'
+        - 'notification'
+        - 'read replica'
+        - 'recovery'
+        - 'restoration'
+
+  DBSubnetGroup:
+      Type: 'AWS::RDS::DBSubnetGroup'
+      Properties:
+        DBSubnetGroupDescription: Subnets available for RDS instances
+        SubnetIds:
+        - !If [ PrivateSubnetAIDEmpty, 'Fn::ImportValue': !Sub '${AppId}-${Environment}-db-subnet-1', !Ref PrivateSubnetAID ]
+        - !If [ PrivateSubnetBIDEmpty, 'Fn::ImportValue': !Sub '${AppId}-${Environment}-db-subnet-2', !Ref PrivateSubnetBID ]
+
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security Group for RDS Instance'
+      SecurityGroupIngress:
+      - IpProtocol: TCP
+        FromPort: !FindInMap [ DBEngineToPort, !Ref Engine, Port ]
+        ToPort: !FindInMap [ DBEngineToPort, !Ref Engine, Port ]
+        CidrIp: !If [ PrivateSubnetACIDREmpty, 'Fn::ImportValue': !Sub '${AppId}-${Environment}-app-subnet-1-cidr' ,!Ref PrivateSubnetACIDR ]
+      - IpProtocol: TCP
+        FromPort: !FindInMap [ DBEngineToPort, !Ref Engine, Port ]
+        ToPort: !FindInMap [ DBEngineToPort, !Ref Engine, Port ]
+        CidrIp: !If [ PrivateSubnetBCIDREmpty, 'Fn::ImportValue': !Sub '${AppId}-${Environment}-app-subnet-2-cidr' ,!Ref PrivateSubnetBCIDR ]
+      VpcId: !If [ VPCIDEmpty, 'Fn::ImportValue': !Sub '${AppId}-${Environment}-vpc', !Ref VPCID ]
+
+  ParamDbName:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !If [ UseParamPrefix, !Sub '/${ParamPrefix}/RDS_DB_NAME', !Sub '/${AWS::StackName}/RDS_DB_NAME' ]
+      Description: DB Name
+      Type: String
+      Value: !Ref DbName
+
+  ParamUserName:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !If [ UseParamPrefix, !Sub '/${ParamPrefix}/RDS_USERNAME', !Sub '/${AWS::StackName}/RDS_USERNAME' ]
+      Description: DB Admin User Name
+      Type: String
+      Value: !Ref DbAdminUsername
+
+  ParamPassword:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !If [ UseParamPrefix, !Sub '/${ParamPrefix}/RDS_PASSWORD', !Sub '/${AWS::StackName}/RDS_PASSWORD' ]
+      Description: DB Admin Password
+      Type: String
+      Value: !Ref DbAdminPassword
+
+  ParamDbHostName:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !If [ UseParamPrefix, !Sub '/${ParamPrefix}/RDS_HOSTNAME', !Sub '/${AWS::StackName}/RDS_HOSTNAME' ]
+      Description: DB Endpoint
+      Type: String
+      Value: !GetAtt Db.Endpoint.Address
+
+  ParamDbPort:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !If [ UseParamPrefix, !Sub '/${ParamPrefix}/RDS_PORT', !Sub '/${AWS::StackName}/RDS_PORT' ]
+      Description: DB Port
+      Type: String
+      Value: !GetAtt Db.Endpoint.Port
+
+Outputs:
+
+  ArtifactId:
+    Description: Artifact ID
+    Value: rds-database
+
+  ArtifactVersion:
+    Description: Artifact version
+    Value: v0.0.8
+
+  Name:
+    Export:
+      Name: !Sub '${AppId}-${Environment}-db-name'
+    Value: !Ref DbName
+
+  HostName:
+    Export:
+      Name: !Sub '${AppId}-${Environment}-db-hostname'
+    Value: !GetAtt Db.Endpoint.Address
+
+  Password:
+    Export:
+      Name: !Sub '${AppId}-${Environment}-db-password'
+    Value: !Ref DbAdminPassword
+
+  Port:
+    Export:
+      Name: !Sub '${AppId}-${Environment}-db-port'
+    Value: !GetAtt Db.Endpoint.Port
+
+  Username:
+    Export:
+      Name: !Sub '${AppId}-${Environment}-db-username'
+    Value: !Ref DbAdminUsername

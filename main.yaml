@@ -1,0 +1,793 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'EC2 Environment'
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+
+    ParameterGroups:
+
+      - Label:
+          default: 'Project Configuration'
+        Parameters:
+          - ProjectName
+          - ProjectDescription
+          - LogRetentionPeriod
+          - StackBaseUrl
+
+      - Label:
+          default: 'Environments'
+        Parameters:
+          - CreateProd
+          - CreateStage
+          - CreateTest
+          - CreateDev
+          - InstanceKeyPair
+
+      - Label:
+          default: 'Bastion Host Configuration'
+        Parameters:
+          - CreateBastionHost
+          - BastionAllowedIPs
+          - BastionKeyPair
+
+      - Label:
+          default: 'Prod Environment Configuration'
+        Parameters:
+          - ProdAllowTrafficFromIp
+          - ProdEnvAsgRange
+          - ProdEnvInstanceType
+          - ProdEnvDbClass
+          - ProdEnvDbAdminUserName
+          - ProdEnvDbAdminUserPassword
+          - ProdEnvDbStorage
+          - ProdEnvDbBackupRetention
+          - ProdEnvDbMultiAZ
+
+      - Label:
+          default: 'Stage Environment Configuration'
+        Parameters:
+          - StageAllowTrafficFromIp
+          - StageEnvAsgRange
+          - StageEnvInstanceType
+          - StageEnvDbClass
+          - StageEnvDbAdminUserName
+          - StageEnvDbAdminUserPassword
+          - StageEnvDbStorage
+          - StageEnvDbBackupRetention
+          - StageEnvDbMultiAZ
+
+      - Label:
+          default: 'Test Environment Configuration'
+        Parameters:
+          - TestEnvAsgRange
+          - TestEnvInstanceType
+          - TestEnvDbClass
+          - TestEnvDbAdminUserName
+          - TestEnvDbAdminUserPassword
+          - TestEnvDbStorage
+          - TestEnvDbBackupRetention
+          - TestEnvDbMultiAZ
+
+      - Label:
+          default: 'Dev Environment Configuration'
+        Parameters:
+          - DevEnvAsgRange
+          - DevEnvInstanceType
+          - DevEnvDbClass
+          - DevEnvDbAdminUserName
+          - DevEnvDbAdminUserPassword
+          - DevEnvDbStorage
+          - DevEnvDbBackupRetention
+          - DevEnvDbMultiAZ
+
+    ParameterLabels:
+      ProjectName:
+        default: 'Name'
+      ProjectDescription:
+        default: 'Description'
+      LogRetentionPeriod:
+        default: 'Log Retention'
+
+      CreateProd:
+        default: 'Create Production?'
+      CreateStage:
+        default: 'Create Staging?'
+      CreateTest:
+        default: 'Create Test?'
+      CreateDev:
+        default: 'Create Dev?'
+      InstanceKeyPair:
+        default: 'Server SSH Key'
+
+      CreateBastionHost:
+        default: 'Create Bastion?'
+      BastionAllowedIPs:
+        default: 'Allowed IPs'
+      BastionKeyPair:
+        default: 'Bastion SSH Key'
+
+      ProdAllowTrafficFromIp:
+        default: 'Allowed IPs'
+      ProdEnvAsgRange:
+        default: 'ASG Limits'
+      ProdEnvInstanceType:
+        default: 'Server Type'
+      ProdEnvDbClass:
+        default: 'DB Type'
+      ProdEnvDbAdminUserName:
+        default: 'DB Admin Username'
+      ProdEnvDbAdminUserPassword:
+        default: 'DB Admin Password'
+      ProdEnvDbStorage:
+        default: 'DB Storage'
+      ProdEnvDbBackupRetention:
+        default: 'DB Backups'
+      ProdEnvDbMultiAZ:
+        default: 'DB High Availability'
+
+      StageAllowTrafficFromIp:
+        default: 'Allowed IPs'
+      StageEnvAsgRange:
+        default: 'ASG Limits'
+      StageEnvInstanceType:
+        default: 'Server Type'
+      StageEnvDbClass:
+        default: 'DB Type'
+      StageEnvDbAdminUserName:
+        default: 'DB Admin Username'
+      StageEnvDbAdminUserPassword:
+        default: 'DB Admin Password'
+      StageEnvDbStorage:
+        default: 'DB Storage'
+      StageEnvDbBackupRetention:
+        default: 'DB Backups'
+      StageEnvDbMultiAZ:
+        default: 'DB High Availability'
+
+      TestEnvAsgRange:
+        default: 'ASG Limits'
+      TestEnvInstanceType:
+        default: 'Server Type'
+      TestEnvDbClass:
+        default: 'DB Type'
+      TestEnvDbAdminUserName:
+        default: 'DB Admin Username'
+      TestEnvDbAdminUserPassword:
+        default: 'DB Admin Password'
+      TestEnvDbStorage:
+        default: 'DB Storage'
+      TestEnvDbBackupRetention:
+        default: 'DB Backups'
+      TestEnvDbMultiAZ:
+        default: 'DB High Availability'
+
+      DevEnvAsgRange:
+        default: 'ASG Limits'
+      DevEnvInstanceType:
+        default: 'Server Type'
+      DevEnvDbClass:
+        default: 'DB Type'
+      DevEnvDbAdminUserName:
+        default: 'DB Admin Username'
+      DevEnvDbAdminUserPassword:
+        default: 'DB Admin Password'
+      DevEnvDbStorage:
+        default: 'DB Storage'
+      DevEnvDbBackupRetention:
+        default: 'DB Backups'
+      DevEnvDbMultiAZ:
+        default: 'DB High Availability'
+
+Parameters:
+
+  ProjectName:
+    Description: 'A short (max 12 chars) project identifier'
+    Type: String
+    MaxLength: 12
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: 'Project name is limited to 12 alphanumeric characters'
+
+  ProjectDescription:
+    Description: 'A short project description'
+    Type: String
+
+  LogRetentionPeriod:
+    Description: 'Number of days to retain app and elb logs'
+    Type: Number
+    Default: 365
+
+  CreateProd:
+    Description: 'Should a production environment get created?'
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  CreateStage:
+    Description: 'Should a staging environment get created?'
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  CreateTest:
+    Description: 'Should a test environment get created?'
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+  CreateDev:
+    Description: 'Should a dev environment get created?'
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+
+  InstanceKeyPair:
+    Description: 'SSH key to access server instances'
+    Type: AWS::EC2::KeyPair::KeyName
+
+  CreateBastionHost:
+    Description: 'Should we create a bastion host within the management VPC?'
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+
+  BastionAllowedIPs:
+    Description: 'IPs allowed to connect to the bastion host'
+    Type: String
+    Default: '0.0.0.0/0'
+
+  BastionKeyPair:
+    Description: 'SSH key to access bastion instance'
+    Type: AWS::EC2::KeyPair::KeyName
+
+  ProdAllowTrafficFromIp:
+    Description: 'Limit viewers of site content'
+    Type: String
+    Default: '0.0.0.0/0'
+
+  ProdEnvAsgRange:
+    Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
+    Type: String
+    Default: '1-1'
+    AllowedPattern: '\d+-\d+'
+
+  ProdEnvDbClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: db.t2.small
+
+  ProdEnvDbAdminUserName:
+    Description: 'Database admin user name'
+    Type: String
+    MaxLength: 32
+    Default: 'dbadmin'
+
+  ProdEnvDbAdminUserPassword:
+    Description: 'Database admin user password'
+    Type: String
+    Default: ''
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  ProdEnvDbStorage:
+    Description: 'Amount of storage provisioned'
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  ProdEnvDbBackupRetention:
+    Description: 'Number of backups to retain'
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  ProdEnvDbMultiAZ:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: true
+    AllowedValues:
+    - true
+    - false
+
+  ProdEnvInstanceType:
+    Description: 'Instance type of app servers'
+    Type: String
+    Default: 't2.large'
+
+  StageAllowTrafficFromIp:
+    Description: 'Limit viewers of site content'
+    Type: String
+    Default: '127.0.0.1/32'
+
+  StageEnvAsgRange:
+    Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
+    Type: String
+    Default: '1-1'
+    AllowedPattern: '\d+-\d+'
+
+  StageEnvDbClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: db.t2.small
+
+  StageEnvDbAdminUserName:
+    Description: 'Database admin user name'
+    Type: String
+    MaxLength: 32
+    Default: 'dbadmin'
+
+  StageEnvDbAdminUserPassword:
+    Description: 'Database admin user password'
+    Type: String
+    Default: ''
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  StageEnvDbStorage:
+    Description: 'Amount of storage provisioned'
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  StageEnvDbBackupRetention:
+    Description: 'Number of backups to retain'
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  StageEnvDbMultiAZ:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  StageEnvInstanceType:
+    Description: 'Instance type of app servers'
+    Type: String
+    Default: 't2.large'
+
+  TestEnvAsgRange:
+    Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
+    Type: String
+    Default: '1-1'
+    AllowedPattern: '\d+-\d+'
+
+  TestEnvDbClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: db.t2.small
+
+  TestEnvDbAdminUserName:
+    Description: 'Database admin user name'
+    Type: String
+    MaxLength: 32
+    Default: 'dbadmin'
+
+  TestEnvDbAdminUserPassword:
+    Description: 'Database admin user password'
+    Type: String
+    Default: ''
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  TestEnvDbStorage:
+    Description: 'Amount of storage provisioned'
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  TestEnvDbBackupRetention:
+    Description: 'Number of backups to retain'
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  TestEnvDbMultiAZ:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  TestEnvInstanceType:
+    Description: 'Auto Scaling Group: Instance type of app servers'
+    Type: String
+    Default: 't2.small'
+
+  DevEnvAsgRange:
+    Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
+    Type: String
+    Default: '1-1'
+    AllowedPattern: '\d+-\d+'
+
+  DevEnvDbClass:
+    Description: 'Database instance class'
+    Type: String
+    Default: db.t2.small
+
+  DevEnvDbAdminUserName:
+    Description: 'Database admin user name'
+    Type: String
+    MaxLength: 32
+    Default: 'dbadmin'
+
+  DevEnvDbAdminUserPassword:
+    Description: 'Database admin user password'
+    Type: String
+    Default: ''
+    MaxLength: 32
+    NoEcho: true
+    ConstraintDescription: 'Database password must be between 12 and 32 chars in length'
+
+  DevEnvDbStorage:
+    Description: 'Amount of storage provisioned'
+    Type: Number
+    Default: 5
+    MinValue: 5
+    MaxValue: 6144
+    ConstraintDescription: 'Must be between 5 and 6144GB'
+
+  DevEnvDbBackupRetention:
+    Description: 'Number of backups to retain'
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    ConstraintDescription: 'Must be a number within the inclusive range of 0 and 35'
+
+  DevEnvDbMultiAZ:
+    Description: 'Create a Multi-AZ RDS database instance'
+    Type: String
+    Default: false
+    AllowedValues:
+    - true
+    - false
+
+  DevEnvInstanceType:
+    Description: 'Instance type of app servers'
+    Type: String
+    Default: 't2.small'
+
+  StackBaseUrl:
+    Description: 'S3 bucket containing CF templates'
+    Type: String
+    Default: 'https://artifact-repo-762736436695.s3.us-east-1.amazonaws.com/templates/'
+
+Conditions:
+
+  #
+  # Environments and the bastion host can be turned on and off at any time by updating the template
+  # Check to see if any and if so which environments we should have running
+  #
+
+  CreateProdEnv: !Equals [ 'true', !Ref CreateProd ]
+
+  CreateStageEnv: !Equals [ 'true', !Ref CreateStage ]
+
+  CreateTestEnv: !Equals [ 'true', !Ref CreateTest ]
+
+  CreateDevEnv: !Equals [ 'true', !Ref CreateDev ]
+
+  # Are any of the environments enabled? Having zero running environments is allowed
+  CreateApp: !Or
+    - !Equals [ 'true', !Ref CreateProd ]
+    - !Equals [ 'true', !Ref CreateStage ]
+    - !Equals [ 'true', !Ref CreateTest ]
+    - !Equals [ 'true', !Ref CreateDev ]
+
+  # The bastion host can be turned of when not needed
+  CreateBastion: !Equals [ 'true', !Ref CreateBastionHost ]
+
+Mappings:
+
+  Constants:
+    ValueOf:
+      MgmtVpcCIDR: '10.10.0.0/16'
+      ProdVpcCIDR: '10.100.0.0/16'
+      StageVpcCIDR: '10.101.0.0/16'
+      TestVpcCIDR: '10.102.0.0/16'
+      DevVpcCIDR: '10.103.0.0/16'
+      TemplateTimeout: 45
+
+  # https://wiki.centos.org/Cloud/AWS
+  AmiByRegionAndEnv:
+    us-east-1:
+      prod: ami-02e98f78
+      stage: ami-02e98f78
+      test: ami-02e98f78
+      dev: ami-02e98f78
+    us-east-2:
+      prod: ami-9cbf9bf9
+      stage: ami-9cbf9bf9
+      test: ami-9cbf9bf9
+      dev: ami-9cbf9bf9
+
+Resources:
+
+  # ~~~ Config Bucket ~~~
+
+  ConfigBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+
+  ConfigBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Statement:
+          - Sid: 'Enforce HTTPS Connections'
+            Action: 's3:*'
+            Effect: 'Deny'
+            Principal: '*'
+            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: 'DenyUnEncryptedObjectUploads'
+            Effect: 'Deny'
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/*'
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+  # ~~~ Notification Topics ~~~
+
+  ErrorTopic:
+    Type: 'AWS::SNS::Topic'
+
+  NotificationTopic:
+    Type: 'AWS::SNS::Topic'
+
+  # ~~~ Networking ~~~
+
+  MgmtVpc:
+    Type: 'AWS::CloudFormation::Stack'
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-management.yaml' ]]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        pAppId: !Ref ProjectName
+        pManagementVPCName: !Sub "${ProjectName}-management"
+        pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
+        pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pProductionVPC: !If [ CreateProdEnv, !GetAtt ProdVpc.Outputs.rVPC, !Ref 'AWS::NoValue' ]
+        pStagingVPC: !If [ CreateStageEnv, !GetAtt StageVpc.Outputs.rVPC, !Ref 'AWS::NoValue' ]
+        pTestVPC: !If [ CreateTestEnv, !GetAtt TestVpc.Outputs.rVPC, !Ref 'AWS::NoValue' ]
+        pDevVPC: !If [ CreateDevEnv, !GetAtt DevVpc.Outputs.rVPC, !Ref 'AWS::NoValue' ]
+
+  ProdVpc:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateProdEnv
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        pVPCName: !Ref ProjectName
+        pEnvironment: 'prod'
+        pExternalHttpAllowed: 'true'
+        pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
+        pCIDR: !FindInMap [ Constants, ValueOf, ProdVpcCIDR ]
+
+  StageVpc:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateStageEnv
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        pVPCName: !Ref ProjectName
+        pEnvironment: 'stage'
+        pExternalHttpAllowed: 'true'
+        pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
+        pCIDR: !FindInMap [ Constants, ValueOf, StageVpcCIDR ]
+
+  TestVpc:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateTestEnv
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        pVPCName: !Ref ProjectName
+        pEnvironment: 'test'
+        pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
+        pCIDR: !FindInMap [ Constants, ValueOf, TestVpcCIDR ]
+
+  DevVpc:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateDevEnv
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        pVPCName: !Ref ProjectName
+        pEnvironment: 'dev'
+        pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
+        pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
+        pCIDR: !FindInMap [ Constants, ValueOf, DevVpcCIDR ]
+
+  # ~~~ Bastion ~~~
+
+  Bastion:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateBastion
+    DependsOn: MgmtVpc
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl,  'bastion.yaml' ] ]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AppId: !Ref ProjectName
+        SshKeyPair: !Ref BastionKeyPair
+        AllowedIPs: !Ref BastionAllowedIPs
+        AwsAgentInstall: true
+
+  # ~~~ Application Environments ~~~
+
+  ProdAppEnvironment:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateProdEnv
+    DependsOn: ProdVpc
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AllowedCIDR: !Ref ProdAllowTrafficFromIp
+        AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'prod' ]
+        AppServerInstanceType: !Ref ProdEnvInstanceType
+        AsgMinSize: !Select [ 0, !Split [ '-', !Ref ProdEnvAsgRange ] ]
+        AsgMaxSize: !Select [ 1, !Split [ '-', !Ref ProdEnvAsgRange ] ]
+        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        DatabaseTemplate: 'rds-database.yaml'
+        DbClass: !Ref ProdEnvDbClass
+        DbAdminUserName: !Ref ProdEnvDbAdminUserName
+        DbAdminUserPassword: !Ref ProdEnvDbAdminUserPassword
+        DbStorage: !Ref ProdEnvDbStorage
+        DbBackupRetention: !Ref ProdEnvDbBackupRetention
+        DbMultiAZ: !Ref ProdEnvDbMultiAZ
+        EC2KeyPair: !Ref InstanceKeyPair
+        Environment: 'prod'
+        ErrorTopic: !Ref ErrorTopic
+        LogRetentionInDays: !Ref LogRetentionPeriod
+        NotificationTopic: !Ref NotificationTopic
+        ProjectName: !Ref ProjectName
+        StackBaseUrl: !Ref StackBaseUrl
+
+  StageAppEnvironment:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateStageEnv
+    DependsOn: StageVpc
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AllowedCIDR: !Ref StageAllowTrafficFromIp
+        AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'stage' ]
+        AppServerInstanceType: !Ref StageEnvInstanceType
+        AsgMinSize: !Select [ 0, !Split [ '-', !Ref StageEnvAsgRange ] ]
+        AsgMaxSize: !Select [ 1, !Split [ '-', !Ref StageEnvAsgRange ] ]
+        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        DatabaseTemplate: 'rds-database.yaml'
+        DbClass: !Ref StageEnvDbClass
+        DbAdminUserName: !Ref StageEnvDbAdminUserName
+        DbAdminUserPassword: !Ref StageEnvDbAdminUserPassword
+        DbStorage: !Ref StageEnvDbStorage
+        DbBackupRetention: !Ref StageEnvDbBackupRetention
+        DbMultiAZ: !Ref StageEnvDbMultiAZ
+        EC2KeyPair: !Ref InstanceKeyPair
+        Environment: 'stage'
+        ErrorTopic: !Ref ErrorTopic
+        LogRetentionInDays: !Ref LogRetentionPeriod
+        NotificationTopic: !Ref NotificationTopic
+        ProjectName: !Ref ProjectName
+        StackBaseUrl: !Ref StackBaseUrl
+
+  TestAppEnvironment:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateTestEnv
+    DependsOn: TestVpc
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'test' ]
+        AppServerInstanceType: !Ref TestEnvInstanceType
+        AsgMinSize: !Select [ 0, !Split [ '-', !Ref TestEnvAsgRange ] ]
+        AsgMaxSize: !Select [ 1, !Split [ '-', !Ref TestEnvAsgRange ] ]
+        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        DatabaseTemplate: 'rds-database.yaml'
+        DbClass: !Ref TestEnvDbClass
+        DbAdminUserName: !Ref TestEnvDbAdminUserName
+        DbAdminUserPassword: !Ref TestEnvDbAdminUserPassword
+        DbStorage: !Ref TestEnvDbStorage
+        DbBackupRetention: !Ref TestEnvDbBackupRetention
+        DbMultiAZ: !Ref TestEnvDbMultiAZ
+        EC2KeyPair: !Ref InstanceKeyPair
+        Environment: 'test'
+        ErrorTopic: !Ref ErrorTopic
+        LogRetentionInDays: !Ref LogRetentionPeriod
+        NotificationTopic: !Ref NotificationTopic
+        ProjectName: !Ref ProjectName
+        StackBaseUrl: !Ref StackBaseUrl
+
+  DevAppEnvironment:
+    Type: 'AWS::CloudFormation::Stack'
+    Condition: CreateDevEnv
+    DependsOn: DevVpc
+    Properties:
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
+      Parameters:
+        AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'dev' ]
+        AppServerInstanceType: !Ref DevEnvInstanceType
+        AsgMinSize: !Select [ 0, !Split [ '-', !Ref DevEnvAsgRange ] ]
+        AsgMaxSize: !Select [ 1, !Split [ '-', !Ref DevEnvAsgRange ] ]
+        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        DatabaseTemplate: 'rds-database.yaml'
+        DbClass: !Ref DevEnvDbClass
+        DbAdminUserName: !Ref DevEnvDbAdminUserName
+        DbAdminUserPassword: !Ref DevEnvDbAdminUserPassword
+        DbStorage: !Ref DevEnvDbStorage
+        DbBackupRetention: !Ref DevEnvDbBackupRetention
+        DbMultiAZ: !Ref DevEnvDbMultiAZ
+        EC2KeyPair: !Ref InstanceKeyPair
+        Environment: 'dev'
+        ErrorTopic: !Ref ErrorTopic
+        LogRetentionInDays: !Ref LogRetentionPeriod
+        NotificationTopic: !Ref NotificationTopic
+        ProjectName: !Ref ProjectName
+        StackBaseUrl: !Ref StackBaseUrl
+
+Outputs:
+
+  ArtifactId:
+    Description: Artifact ID
+    Value: ec2-env
+
+  ArtifactVersion:
+    Description: Artifact version
+    Value: v0.0.1-SNAPSHOT
+
+  BastionHostIP:
+    Condition: CreateBastion
+    Description: 'The public IP of the bastion'
+    Value: !GetAtt Bastion.Outputs.BastionIP
