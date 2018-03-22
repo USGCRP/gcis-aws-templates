@@ -89,6 +89,8 @@ Metadata:
         default: 'Description'
       LogRetentionPeriod:
         default: 'Log Retention'
+      StackBaseUrl:
+        default: 'Template Location'
 
       CreateProd:
         default: 'Create Production?'
@@ -511,6 +513,9 @@ Mappings:
 
   Constants:
     ValueOf:
+      BastionStack: 'release/com/icf/bastion/0.0.5/bastion.yaml'
+      DatabaseStack: 'release/com/icf/rds-database/0.0.8/main.yaml'
+      NetworkingStack: 'release/com/icf/base-vpc/0.1.4/'
       MgmtVpcCIDR: '10.10.0.0/16'
       ProdVpcCIDR: '10.100.0.0/16'
       StageVpcCIDR: '10.101.0.0/16'
@@ -575,7 +580,7 @@ Resources:
   MgmtVpc:
     Type: 'AWS::CloudFormation::Stack'
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-management.yaml' ]]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, !FindInMap [ Constants, ValueOf, NetworkingStack ], 'vpc-management.yaml' ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         pAppId: !Ref ProjectName
@@ -592,7 +597,7 @@ Resources:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateProdEnv
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, !FindInMap [ Constants, ValueOf, NetworkingStack ], 'vpc-environment.yaml' ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         pVPCName: !Ref ProjectName
@@ -607,7 +612,7 @@ Resources:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateStageEnv
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, !FindInMap [ Constants, ValueOf, NetworkingStack ], 'vpc-environment.yaml' ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         pVPCName: !Ref ProjectName
@@ -622,7 +627,7 @@ Resources:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateTestEnv
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, !FindInMap [ Constants, ValueOf, NetworkingStack ], 'vpc-environment.yaml' ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         pVPCName: !Ref ProjectName
@@ -636,7 +641,7 @@ Resources:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateDevEnv
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'vpc-environment.yaml' ]]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, !FindInMap [ Constants, ValueOf, NetworkingStack ], 'vpc-environment.yaml' ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         pVPCName: !Ref ProjectName
@@ -653,7 +658,7 @@ Resources:
     Condition: CreateBastion
     DependsOn: MgmtVpc
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl,  'bastion.yaml' ] ]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl,  !FindInMap [ Constants, ValueOf, BastionStack ] ]]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         AppId: !Ref ProjectName
@@ -666,9 +671,9 @@ Resources:
   ProdAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateProdEnv
-    DependsOn: 
-      - ProdVpc
+    DependsOn:
       - MgmtVpc
+      - ProdVpc
     Properties:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
@@ -679,7 +684,7 @@ Resources:
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref ProdEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref ProdEnvAsgRange ] ]
         ConfigBucketArn: !GetAtt ConfigBucket.Arn
-        DatabaseTemplate: 'rds-database.yaml'
+        DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref ProdEnvDbClass
         DbAdminUserName: !Ref ProdEnvDbAdminUserName
         DbAdminUserPassword: !Ref ProdEnvDbAdminUserPassword
@@ -698,8 +703,8 @@ Resources:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateStageEnv
     DependsOn:
-      - StageVpc
       - MgmtVpc
+      - StageVpc
     Properties:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
@@ -710,7 +715,7 @@ Resources:
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref StageEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref StageEnvAsgRange ] ]
         ConfigBucketArn: !GetAtt ConfigBucket.Arn
-        DatabaseTemplate: 'rds-database.yaml'
+        DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref StageEnvDbClass
         DbAdminUserName: !Ref StageEnvDbAdminUserName
         DbAdminUserPassword: !Ref StageEnvDbAdminUserPassword
@@ -728,9 +733,9 @@ Resources:
   TestAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateTestEnv
-    DependsOn: 
-      - TestVpc
+    DependsOn:
       - MgmtVpc
+      - TestVpc
     Properties:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
@@ -740,7 +745,7 @@ Resources:
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref TestEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref TestEnvAsgRange ] ]
         ConfigBucketArn: !GetAtt ConfigBucket.Arn
-        DatabaseTemplate: 'rds-database.yaml'
+        DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref TestEnvDbClass
         DbAdminUserName: !Ref TestEnvDbAdminUserName
         DbAdminUserPassword: !Ref TestEnvDbAdminUserPassword
@@ -758,9 +763,9 @@ Resources:
   DevAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateDevEnv
-    DependsOn: 
-      - DevVpc
+    DependsOn:
       - MgmtVpc
+      - DevVpc
     Properties:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
@@ -770,7 +775,7 @@ Resources:
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref DevEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref DevEnvAsgRange ] ]
         ConfigBucketArn: !GetAtt ConfigBucket.Arn
-        DatabaseTemplate: 'rds-database.yaml'
+        DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref DevEnvDbClass
         DbAdminUserName: !Ref DevEnvDbAdminUserName
         DbAdminUserPassword: !Ref DevEnvDbAdminUserPassword
