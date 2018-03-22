@@ -666,9 +666,11 @@ Resources:
   ProdAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateProdEnv
-    DependsOn: ProdVpc
+    DependsOn: 
+      - ProdVpc
+      - MgmtVpc
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         AllowedCIDR: !Ref ProdAllowTrafficFromIp
@@ -695,9 +697,11 @@ Resources:
   StageAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateStageEnv
-    DependsOn: StageVpc
+    DependsOn:
+      - StageVpc
+      - MgmtVpc
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         AllowedCIDR: !Ref StageAllowTrafficFromIp
@@ -724,9 +728,11 @@ Resources:
   TestAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateTestEnv
-    DependsOn: TestVpc
+    DependsOn: 
+      - TestVpc
+      - MgmtVpc
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'test' ]
@@ -752,9 +758,11 @@ Resources:
   DevAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
     Condition: CreateDevEnv
-    DependsOn: DevVpc
+    DependsOn: 
+      - DevVpc
+      - MgmtVpc
     Properties:
-      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'snapshot/com/icf/ec2-env/0.0.1-SNAPSHOT/environment.yaml' ] ]
+      TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
         AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'dev' ]
