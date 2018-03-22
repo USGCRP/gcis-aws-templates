@@ -513,9 +513,9 @@ Mappings:
 
   Constants:
     ValueOf:
-      BastionStack: 'release/com/icf/bastion/0.0.5/bastion.yaml'
-      DatabaseStack: 'release/com/icf/rds-database/0.0.8/main.yaml'
-      NetworkingStack: 'release/com/icf/base-vpc/0.1.4/'
+      BastionStack: 'bastion.yaml'
+      DatabaseStack: 'rds-database.yaml'
+      NetworkingStack: ''
       MgmtVpcCIDR: '10.10.0.0/16'
       ProdVpcCIDR: '10.100.0.0/16'
       StageVpcCIDR: '10.101.0.0/16'
