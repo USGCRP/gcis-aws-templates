@@ -526,15 +526,15 @@ Mappings:
   # https://wiki.centos.org/Cloud/AWS
   AmiByRegionAndEnv:
     us-east-1:
-      prod: ami-02e98f78
-      stage: ami-02e98f78
-      test: ami-02e98f78
-      dev: ami-02e98f78
+      prod: ami-a22323d8
+      stage: ami-a22323d8
+      test: ami-a22323d8
+      dev: ami-a22323d8
     us-east-2:
-      prod: ami-9cbf9bf9
-      stage: ami-9cbf9bf9
-      test: ami-9cbf9bf9
-      dev: ami-9cbf9bf9
+      prod: ami-a22323d8
+      stage: ami-a22323d8
+      test: ami-a22323d8
+      dev: ami-a22323d8
 
 Resources:
 

@@ -191,12 +191,12 @@ Resources:
         Fn::Base64: !Sub |
           #!/usr/bin/env bash
           hostnamectl set-hostname "${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)"
-          yum install -y epel-release
-          yum install -y awscli
+          apt-get install -y awscli
           echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
           service sshd restart
+          apt-get install -y python-setuptools
           /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
-          cp -v /usr/lib/python2*/site-packages/aws_cfn_bootstrap*/init/redhat/cfn-hup /etc/init.d
+          cp -v /usr/local/lib/python2*/dist-packages/aws_cfn_bootstrap*/init/ubuntu/cfn-hup /etc/init.d
           chmod +x /etc/init.d/cfn-hup
           /opt/aws/bin/cfn-init -v -c server --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region}
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
@@ -214,7 +214,7 @@ Resources:
             '/etc/cron.d/updates':
               mode: '000644'
               content: |
-                15 * * * * root yum -y update
+                15 * * * * root apt-get -y update
             '/tmp/cloudwatchlog.conf':
               content: !Sub |
                 [general]
@@ -239,8 +239,7 @@ Resources:
               mode: '000755'
               content: !Sub |
                 #!/usr/bin/env bash
-                yum -y install zip unzip perl-Switch perl-DateTime perl-Sys-Syslog perl-LWP-Protocol-https perl-Digest-SHA
-                cd /opt
+                apt-get -y install zip unzip apt-get install libwww-perl libdatetime-perl                cd /opt
                 curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
                 unzip CloudWatchMonitoringScripts-1.2.1.zip
                 rm CloudWatchMonitoringScripts-1.2.1.zip
@@ -279,7 +278,7 @@ Resources:
                 action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --region ${AWS::Region} --resource Server
                 runas=root
           packages:
-            yum:
+            apt:
               jq: []
               postgresql: []
           services:
@@ -294,7 +293,7 @@ Resources:
             '01_monitoring':
               command: '/tmp/config-monitoring'
             '02_update':
-              command: 'yum -y update'
+              command: 'apt-get -y update'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
