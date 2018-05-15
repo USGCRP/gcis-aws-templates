@@ -31,6 +31,10 @@ Parameters:
     Description: 'ARN of S3 bucket that stores configuration files'
     Type: String
 
+  DataBucketArn:
+    Description: 'ARN of S3 bucket that stores database dumps'
+    Type: String
+
   DatabaseTemplate:
     Description: 'The key for the correct version of the db template'
     Type: String
@@ -354,6 +358,22 @@ Resources:
                 Action:
                   - 's3:GetObject'
                 Resource: !Sub '${ConfigBucketArn}/*'
+        - PolicyName: 'ListDataBucket'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:ListBucket'
+                Resource: !Ref DataBucketArn
+        - PolicyName: 'DataBucketRead'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub '${DataBucketArn}/*'
         - PolicyName: 'CloudWatchLogs'
           PolicyDocument:
             Version: '2012-10-17'

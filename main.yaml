@@ -15,6 +15,8 @@ Metadata:
           - ProjectDescription
           - LogRetentionPeriod
           - StackBaseUrl
+          - ConfigBucketArn
+          - DataBucketArn
 
       - Label:
           default: 'Environments'
@@ -91,6 +93,10 @@ Metadata:
         default: 'Log Retention'
       StackBaseUrl:
         default: 'Template Location'
+      ConfigBucketArn:
+        default: 'Config Bucket ARN'
+      DataBucketArn:
+        default: 'Database Bucket ARN'
 
       CreateProd:
         default: 'Create Production?'
@@ -482,7 +488,18 @@ Parameters:
   StackBaseUrl:
     Description: 'S3 bucket containing CF templates'
     Type: String
-    Default: 'https://artifact-repo-762736436695.s3.us-east-1.amazonaws.com/templates/'
+    Default: 'https://s3.amazonaws.com/cf-templates-gcis-us-east-1/templates/'
+
+  ConfigBucketArn:
+    Description: 'S3 bucket containing configs per environment'
+    Type: String
+    Default: ''
+
+  DataBucketArn:
+    Description: 'S3 bucket containing database dumps'
+    Type: String
+    Default: ''
+
 
 Conditions:
 
@@ -537,35 +554,6 @@ Mappings:
       dev: ami-a22323d8
 
 Resources:
-
-  # ~~~ Config Bucket ~~~
-
-  ConfigBucket:
-    Type: 'AWS::S3::Bucket'
-    DeletionPolicy: Retain
-
-  ConfigBucketPolicy:
-    Type: 'AWS::S3::BucketPolicy'
-    Properties:
-      Bucket: !Ref ConfigBucket
-      PolicyDocument:
-        Statement:
-          - Sid: 'Enforce HTTPS Connections'
-            Action: 's3:*'
-            Effect: 'Deny'
-            Principal: '*'
-            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/*'
-            Condition:
-              Bool:
-                aws:SecureTransport: false
-          - Sid: 'DenyUnEncryptedObjectUploads'
-            Effect: 'Deny'
-            Principal: '*'
-            Action: 's3:PutObject'
-            Resource: !Sub 'arn:aws:s3:::${ConfigBucket}/*'
-            Condition:
-              StringNotEquals:
-                s3:x-amz-server-side-encryption: AES256
 
   # ~~~ Notification Topics ~~~
 
@@ -683,7 +671,8 @@ Resources:
         AppServerInstanceType: !Ref ProdEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref ProdEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref ProdEnvAsgRange ] ]
-        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        ConfigBucketArn: !Ref ConfigBucketArn
+        DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref ProdEnvDbClass
         DbAdminUserName: !Ref ProdEnvDbAdminUserName
@@ -714,7 +703,8 @@ Resources:
         AppServerInstanceType: !Ref StageEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref StageEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref StageEnvAsgRange ] ]
-        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        ConfigBucketArn: !Ref ConfigBucketArn
+        DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref StageEnvDbClass
         DbAdminUserName: !Ref StageEnvDbAdminUserName
@@ -744,7 +734,8 @@ Resources:
         AppServerInstanceType: !Ref TestEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref TestEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref TestEnvAsgRange ] ]
-        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        ConfigBucketArn: !Ref ConfigBucketArn
+        DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref TestEnvDbClass
         DbAdminUserName: !Ref TestEnvDbAdminUserName
@@ -774,7 +765,8 @@ Resources:
         AppServerInstanceType: !Ref DevEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref DevEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref DevEnvAsgRange ] ]
-        ConfigBucketArn: !GetAtt ConfigBucket.Arn
+        ConfigBucketArn: !Ref ConfigBucketArn
+        DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
         DbClass: !Ref DevEnvDbClass
         DbAdminUserName: !Ref DevEnvDbAdminUserName
