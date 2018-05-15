@@ -191,6 +191,7 @@ Resources:
         Fn::Base64: !Sub |
           #!/usr/bin/env bash
           hostnamectl set-hostname "${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)"
+          apt-get -y update
           apt-get install -y awscli
           echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
           service sshd restart
@@ -239,16 +240,17 @@ Resources:
               mode: '000755'
               content: !Sub |
                 #!/usr/bin/env bash
-                apt-get -y install zip unzip apt-get install libwww-perl libdatetime-perl                cd /opt
+                apt-get -y install zip unzip
+                apt-get -y install libwww-perl libdatetime-perl
+                cd /opt
                 curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
                 unzip CloudWatchMonitoringScripts-1.2.1.zip
                 rm CloudWatchMonitoringScripts-1.2.1.zip
                 curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O
                 python ./awslogs-agent-setup.py -n --region ${AWS::Region} -c /tmp/cloudwatchlog.conf
                 rm -f ./awslogs-agent-setup.py
-                systemctl daemon-reload
-                systemctl start awslogs
-                systemctl enable awslogs
+                service awslogs start
+                update-rc.d minidlna enable
             '/etc/systemd/system/awslogs.service':
               content: |
                 [Unit]
