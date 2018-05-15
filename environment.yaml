@@ -250,7 +250,7 @@ Resources:
                 python ./awslogs-agent-setup.py -n --region ${AWS::Region} -c /tmp/cloudwatchlog.conf
                 rm -f ./awslogs-agent-setup.py
                 service awslogs start
-                update-rc.d minidlna enable
+                update-rc.d awslogs enable
             '/etc/systemd/system/awslogs.service':
               content: |
                 [Unit]
