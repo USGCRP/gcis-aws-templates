@@ -212,6 +212,16 @@ Resources:
             - "base"
         base:
           files:
+            '/tmp/setup-gcisops-user':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                useradd -d /home/gcisops -m -p $(echo "${DbAdminPassword}" | openssl passwd -1 -stdin) gcisops
+                echo "export PGHOST=${AppId}-${Environment}-db-hostname" >>~gcisops/.bashrc
+                echo "export PGPORT=${AppId}-${Environment}-db-port" >>~gcisops/.bashrc
+                echo "export PGDATABASE=gcis" >>~gcisops/.bashrc
+                echo "export PGUSER=gcisops" >>~gcisops/.bashrc
+                echo "export PGPASSWORD=${DbAdminPassword}" >>~gcisops/.bashrc
             '/etc/cron.d/cloudwatch':
               mode: '000644'
               content: |
@@ -300,6 +310,8 @@ Resources:
               command: '/tmp/config-monitoring'
             '02_update':
               command: 'apt-get -y update'
+            '03_create_gcisops_user':
+              command: '/tmp/setup-gcisops-user'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
