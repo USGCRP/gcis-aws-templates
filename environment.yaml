@@ -216,12 +216,12 @@ Resources:
               mode: '000755'
               content: !Sub |
                 #!/usr/bin/env bash
-                useradd -d /home/gcisops -m -p $(echo "${DbAdminPassword}" | openssl passwd -1 -stdin) gcisops
-                echo "export PGHOST=${AppId}-${Environment}-db-hostname" >>~gcisops/.bashrc
-                echo "export PGPORT=${AppId}-${Environment}-db-port" >>~gcisops/.bashrc
+                useradd -d /home/gcisops -m -p $(echo "${DbAdminUserPassword}" | openssl passwd -1 -stdin) gcisops
+                echo "export PGHOST=${AppDB.Outputs.HostName}" >>~gcisops/.bashrc
+                echo "export PGPORT=${AppDB.Outputs.Port}" >>~gcisops/.bashrc
                 echo "export PGDATABASE=gcis" >>~gcisops/.bashrc
                 echo "export PGUSER=gcisops" >>~gcisops/.bashrc
-                echo "export PGPASSWORD=${DbAdminPassword}" >>~gcisops/.bashrc
+                echo "export PGPASSWORD=${DbAdminUserPassword}" >>~gcisops/.bashrc
             '/etc/cron.d/cloudwatch':
               mode: '000644'
               content: |
