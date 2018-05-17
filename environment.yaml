@@ -236,6 +236,7 @@ Resources:
                 # Create gcisops role & set password
                 createuser -U ${DbAdminUserName} -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -d gcisops
                 psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "ALTER USER gcisops WITH PASSWORD '${DbAdminUserPassword}'"
+                psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "grant rds_superuser to gcisops;"
             '/tmp/create-gcis-db':
               mode: '000755'
               content: !Sub |
@@ -248,6 +249,35 @@ Resources:
                 # create the db
                 echo "Creating gcis db"
                 createdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
+            '/tmp/populate-gcis-db':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if we're the lead instance or exit
+                /usr/local/bin/lead_instance.sh || exit
+                export PGPASSWORD=${DbAdminUserPassword}
+                # Check if the gcis database is populated
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\d" | grep -q "No relations found" || exit
+                # create the db
+                echo "Populating gcis db"
+
+                # pull tar from data S3 
+                REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+                BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
+
+                mkdir /tmp/gcis_data
+                aws s3 cp s3://gcis-databucket-test/latest/latest_gcis_database.tar.gz /tmp
+                aws s3 --region $REGION cp s3://$BUCKET/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+
+                # Populate the data into the database
+                cd /tmp/gcis_data
+                tar xzvf latest_gcis_database.tar.gz
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_schema.dump
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_contents_1.dump
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_contents_2.dump
+
+                # Set the default path
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
             '/usr/local/bin/lead_instance.sh':
                 mode: "000755"
                 content: !Sub |
@@ -361,6 +391,8 @@ Resources:
               command: '/tmp/setup-gcisops-role'
             '05_create_gcis_db':
               command: '/tmp/create-gcis-db'
+            '06_populate_gcis_db':
+              command: '/tmp/populate-gcis-db'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
