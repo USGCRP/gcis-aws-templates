@@ -236,6 +236,18 @@ Resources:
                 # Create gcisops role & set password
                 createuser -U ${DbAdminUserName} -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -d gcisops
                 psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "ALTER USER gcisops WITH PASSWORD '${DbAdminUserPassword}'"
+            '/tmp/create-gcis-db':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if we're the lead instance or exit
+                /usr/local/bin/lead_instance.sh || exit
+                export PGPASSWORD=${DbAdminUserPassword}
+                # Check if the gcis database exists and exit if it does
+                psql -U gcisops -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\l" | grep gcis && echo "gcisops role exists" && exit
+                # create the db
+                echo "Creating gcis db"
+                createdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
             '/usr/local/bin/lead_instance.sh':
                 mode: "000755"
                 content: !Sub |
@@ -347,6 +359,8 @@ Resources:
               command: '/tmp/setup-gcisops-user'
             '04_create_gcisops_role':
               command: '/tmp/setup-gcisops-role'
+            '05_create_gcis_db':
+              command: '/tmp/create-gcis-db'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
