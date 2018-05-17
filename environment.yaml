@@ -144,6 +144,7 @@ Resources:
       MaxSize: !Ref AsgMaxSize
       DesiredCapacity: !Ref AsgMinSize
       Cooldown: 60
+      AutoScalingGroupName: !Sub "${ProjectName}-${Environment}-AutoScalingGroup"
 #      HealthCheckType: 'ELB'
       HealthCheckType: 'EC2'
       HealthCheckGracePeriod: 600
@@ -222,6 +223,38 @@ Resources:
                 echo "export PGDATABASE=gcis" >>~gcisops/.bashrc
                 echo "export PGUSER=gcisops" >>~gcisops/.bashrc
                 echo "export PGPASSWORD=${DbAdminUserPassword}" >>~gcisops/.bashrc
+            '/tmp/setup-gcisops-role':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if we're the lead instance or exit
+                /usr/local/bin/lead_instance.sh || exit
+                export PGPASSWORD=${DbAdminUserPassword}
+                # Check if the gcisops role exists and exit if it does
+                psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\du" | grep gcisops && echo "gcisops role exists" && exit
+                echo "Creating gcisops role"
+                # Create gcisops role & set password
+                createuser -U ${DbAdminUserName} -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -d gcisops
+                psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "ALTER USER gcisops WITH PASSWORD '${DbAdminUserPassword}'"
+            '/usr/local/bin/lead_instance.sh':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  INSTANCE_ID=`wget -q -O - http://169.254.169.254/latest/meta-data/instance-id`
+                  REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+
+                  # Find the Auto Scaling Group name from the Elastic Beanstalk environment
+                  ASG='${ProjectName}-${Environment}-AutoScalingGroup'
+
+                  # Find the first instance in the Auto Scaling Group
+                  FIRST=`aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names $ASG \
+                      --region $REGION --output json | \
+                      jq -r '.AutoScalingGroups[].Instances[] | select(.LifecycleState=="InService") | .InstanceId' | sort | head -1`
+
+                  echo First Instance: $FIRST
+                  echo My Instance ID: $INSTANCE_ID
+                  # If the instance ids are the same exit 0
+                  [ "$FIRST" = "$INSTANCE_ID" ]
             '/etc/cron.d/cloudwatch':
               mode: '000644'
               content: |
@@ -312,6 +345,8 @@ Resources:
               command: 'apt-get -y update'
             '03_create_gcisops_user':
               command: '/tmp/setup-gcisops-user'
+            '04_create_gcisops_role':
+              command: '/tmp/setup-gcisops-role'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
@@ -418,6 +453,14 @@ Resources:
                 Resource:
                   - !Ref ErrorTopic
                   - !Ref NotificationTopic
+        - PolicyName: 'SeeASGs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'autoscaling:DescribeAutoScalingGroups'
+                Resource: '*'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
