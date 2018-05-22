@@ -176,10 +176,10 @@ Resources:
         - OldestInstance
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT30M
+        Timeout: PT60M
     UpdatePolicy:
       AutoScalingRollingUpdate:
-        PauseTime: PT30M
+        PauseTime: PT45M
         WaitOnResourceSignals: true
         MinInstancesInService: 1
 
@@ -213,6 +213,7 @@ Resources:
             - "base"
         base:
           files:
+            # Setup scripts for GCIS
             '/tmp/setup-gcisops-user':
               mode: '000755'
               content: !Sub |
@@ -242,10 +243,20 @@ Resources:
               content: !Sub |
                 #!/usr/bin/env bash
                 # Check if we're the lead instance or exit
-                /usr/local/bin/lead_instance.sh || exit
+                MSG="$(/usr/local/bin/lead_instance.sh)"
+                RESULT=$?
+                if [[ $RESULT == 1 ]]; then
+                  echo "Not lead instance. Skipping DB create."
+                  exit
+                fi
                 export PGPASSWORD=${DbAdminUserPassword}
-                # Check if the gcis database exists and exit if it does
-                psql -U gcisops -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\l" | grep gcis && echo "gcisops role exists" && exit
+                # Check if the gcis database already exists and exit if it does
+                MSG="$(/usr/local/bin/database_exists_check.sh)"
+                RESULT=$?
+                if [[ $RESULT == 0 ]]; then
+                  echo "Database Already Exists"
+                  exit
+                fi
                 # create the db
                 echo "Creating gcis db"
                 createdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
@@ -254,10 +265,20 @@ Resources:
               content: !Sub |
                 #!/usr/bin/env bash
                 # Check if we're the lead instance or exit
-                /usr/local/bin/lead_instance.sh || exit
+                MSG="$(/usr/local/bin/lead_instance.sh)"
+                RESULT=$?
+                if [[ $RESULT == 1 ]]; then
+                  echo "Not lead instance. Skipping DB populate."
+                  exit
+                fi
                 export PGPASSWORD=${DbAdminUserPassword}
-                # Check if the gcis database is populated
-                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\d" | grep -q "No relations found" || exit
+                # Check if the gcis database is already populated
+                MSG="$(/usr/local/bin/database_populated_check.sh)"
+                RESULT=$?
+                if [[ $RESULT == 0 ]]; then
+                  echo "Database Already Populated"
+                  exit
+                fi
                 # create the db
                 echo "Populating gcis db"
 
@@ -266,7 +287,6 @@ Resources:
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
                 mkdir /tmp/gcis_data
-                aws s3 cp s3://gcis-databucket-test/latest/latest_gcis_database.tar.gz /tmp
                 aws s3 --region $REGION cp s3://$BUCKET/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 # Populate the data into the database
@@ -278,6 +298,168 @@ Resources:
 
                 # Set the default path
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
+            '/tmp/setup-gcis':
+                mode: "000755"
+                content: !Sub |
+                  echo "Installing system prereqs"
+                  apt-get -y update
+                  apt-get -y install postgresql-contrib-9.3 libpg-hstore-perl \
+                    postgresql-9.3 postgresql-server-dev-9.3 libuuid1 uuid-dev make \
+                    openssl libssl-dev libpq-dev graphviz libxml2 raptor2-utils curl \
+                    perlbrew git
+
+                  echo
+                  echo "Installing perlbrew"
+                  sudo -u gcisops -i bash << EOT
+                    perlbrew init
+                    echo "source ~/perl5/perlbrew/etc/bashrc" >>~/.bashrc
+                    source ~/.bashrc
+                    perlbrew install perl-5.20.0 #long running
+                    perlbrew install-cpanm
+                    perlbrew install-patchperl
+                    source ~/.bashrc
+                    perlbrew switch perl-5.20.0
+                  EOT
+
+                  echo
+                  echo "Cloning gcis"
+                  sudo -u gcisops -i bash << EOU
+                    git clone https://github.com/USGCRP/gcis
+                  EOU
+
+                  echo
+                  echo "Grabbing GCIS Config"
+                  # pull config from S3
+                  REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+                  BUCKET=`echo '${ConfigBucketArn}' | cut -d ':' -f6`
+                  echo "region $REGION"
+                  echo "bucket $BUCKET"
+                  aws s3 --region $REGION cp s3://$BUCKET/Tuba.conf.${Environment} ~gcisops/gcis/Tuba.conf
+                  chown gcisops:gcisops ~gcisops/gcis/Tuba.conf
+
+                  echo
+                  echo "Installing GCIS Perl prereqs"
+                  sudo -u gcisops -i bash << EOF
+                    source ~/.bashrc
+                    perlbrew switch perl-5.20.0
+                    cd gcis
+                    mkdir log
+
+                    cpanm --installdeps --force .
+                  EOF
+
+                  # Confirm the database is ready with a call trap
+                  echo
+                  echo "Waiting for GCIS Database to be ready"
+                  MSG="$(/usr/local/bin/delay_until_database_ready.sh)"
+                  RESULT=$?
+                  if [[ $RESULT == 1 ]]; then
+                    echo $MSG
+                    exit 1
+                  else 
+                    echo $MSG
+                  fi
+
+                  echo
+                  echo "Starting GCIS"
+                  sudo -u gcisops -i bash << EOG
+                    perlbrew switch perl-5.20.0
+                    /usr/local/bin/gcis_start
+                  EOG
+            # GCIS start & stop scripts
+            '/usr/local/bin/gcis_start':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+
+                  export MOJO_LOG_LEVEL=debug
+                  export MOJO_MODE=production
+
+                  export PGHOST=${AppDB.Outputs.HostName}
+                  export PGPORT=${AppDB.Outputs.Port}
+                  export PGDATABASE=gcis
+                  export PGUSER=gcisops
+                  export PGPASSWORD=${DbAdminUserPassword}
+
+                  cd /home/gcisops/gcis
+                  hypnotoad ./bin/tuba
+            '/usr/local/bin/gcis_stop':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  cd /home/gcisops/gcis
+                  hypnotoad -s ./bin/tuba
+            # Utility scripts for checking the ready state 
+            '/usr/local/bin/delay_until_database_ready.sh':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  DELAY=30
+                  NOTREADY=1
+                  MAXATTEMPTS=5
+                  ATTEMPTS=1
+                  MSG="$(/usr/local/bin/database_ready.sh)"
+                  NOTREADY=$?
+                  echo "Attempt: $ATTEMPTS/$MAXATTEMPTS, delay $DELAY notready $NOTREADY || "
+                  while (( $NOTREADY )); do
+                    if [[ $MAXATTEMPTS == $ATTEMPTS ]]; then
+                      echo "Timed out waiting for database to be ready"
+                      exit 1
+                    fi
+                    sleep $DELAY
+                    MSG="$(/usr/local/bin/database_ready.sh)"
+                    NOTREADY=$?
+                    DELAY=$(( DELAY * 2 ))
+                    ATTEMPTS=$(( ATTEMPTS + 1 ))
+                    echo "Attempt: $ATTEMPTS/$MAXATTEMPTS, delay $DELAY notready $NOTREADY || "
+                  done
+                  echo "Found database to be ready after $ATTEMPTS attempts"
+                  exit 0
+            '/usr/local/bin/database_ready.sh':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  # Check if the gcis database exists and return 1 if it doesnt
+                  MSG="$(/usr/local/bin/database_exists_check.sh)"
+                  RESULT=$?
+                  if [[ $RESULT == 1 ]]; then
+                    echo "Database Not Ready: Doesn't Exist"
+                    exit 1
+                  fi
+                  # Check if the gcis database is populated and return 1 if it isn't
+                  MSG2="$(/usr/local/bin/database_populated_check.sh)"
+                  RESULT2=$?
+                  if [[ $RESULT2 == 1 ]]; then
+                    echo "Database Not Ready: Not Populated"
+                    exit 1
+                  fi
+                  echo "Database ready"
+                  exit 0
+            '/usr/local/bin/database_exists_check.sh':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  export PGPASSWORD=${DbAdminUserPassword}
+                  echo "Checking DB exists"
+                  psql -U gcisops -d postgres \
+                    -p ${AppDB.Outputs.Port} \
+                    -h ${AppDB.Outputs.HostName} \
+                    -c "\l" | grep -q gcis && exit 0
+                  echo "DB doesn't exist"
+                  exit 1
+            '/usr/local/bin/database_populated_check.sh':
+                mode: "000755"
+                content: !Sub |
+                  #!/bin/bash
+                  export PGPASSWORD=${DbAdminUserPassword}
+                  echo "Checking DB populated"
+                  psql -U gcisops -d gcis \
+                    -p ${AppDB.Outputs.Port} \
+                    -h ${AppDB.Outputs.HostName} \
+                    -c "\d" | grep -q "No relations found" || exit 0
+                  echo "DB not populated"
+                  exit 1
+            # AWS utility to confirm we're the instance in charge
             '/usr/local/bin/lead_instance.sh':
                 mode: "000755"
                 content: !Sub |
@@ -297,6 +479,7 @@ Resources:
                   echo My Instance ID: $INSTANCE_ID
                   # If the instance ids are the same exit 0
                   [ "$FIRST" = "$INSTANCE_ID" ]
+            # Other general setup scripts & config
             '/etc/cron.d/cloudwatch':
               mode: '000644'
               content: |
@@ -393,6 +576,8 @@ Resources:
               command: '/tmp/create-gcis-db'
             '06_populate_gcis_db':
               command: '/tmp/populate-gcis-db'
+            '07_install_gcis':
+              command: '/tmp/setup-gcis'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
