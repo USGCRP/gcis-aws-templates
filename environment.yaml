@@ -176,10 +176,10 @@ Resources:
         - OldestInstance
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT30M
+        Timeout: PT60M
     UpdatePolicy:
       AutoScalingRollingUpdate:
-        PauseTime: PT30M
+        PauseTime: PT60M
         WaitOnResourceSignals: true
         MinInstancesInService: 1
 
@@ -303,7 +303,7 @@ Resources:
 
                 # Set the default path
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
-            '/tmp/setup-gcis':
+            '/tmp/setup-gcis-prereqs':
                 mode: "000755"
                 content: !Sub |
                   echo "Installing system prereqs"
@@ -313,7 +313,9 @@ Resources:
                     openssl libssl-dev libpq-dev graphviz libxml2 raptor2-utils curl \
                     perlbrew git
 
-                  echo
+            '/tmp/setup-gcis-perl':
+                mode: "000755"
+                content: !Sub |
                   echo "Installing perlbrew"
                   sudo -u gcisops -i bash << EOT
                     perlbrew init
@@ -325,14 +327,14 @@ Resources:
                     source ~/.bashrc
                     perlbrew switch perl-5.20.0
                   EOT
-
-                  echo
+            '/tmp/setup-gcis-repo':
+                mode: "000755"
+                content: !Sub |
                   echo "Cloning gcis"
                   sudo -u gcisops -i bash << EOU
                     git clone https://github.com/USGCRP/gcis
                   EOU
 
-                  echo
                   echo "Grabbing GCIS Config"
                   # pull config from S3
                   REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
@@ -341,8 +343,9 @@ Resources:
                   echo "bucket $BUCKET"
                   aws s3 --region $REGION cp s3://$BUCKET/Tuba.conf.${Environment} ~gcisops/gcis/Tuba.conf
                   chown gcisops:gcisops ~gcisops/gcis/Tuba.conf
-
-                  echo
+            '/tmp/setup-gcis-modules':
+                mode: "000755"
+                content: !Sub |
                   echo "Installing GCIS Perl prereqs"
                   sudo -u gcisops -i bash << EOF
                     source ~/.bashrc
@@ -352,9 +355,10 @@ Resources:
 
                     cpanm --installdeps --force .
                   EOF
-
+            '/tmp/start-gcis':
+                mode: "000755"
+                content: !Sub |
                   # Confirm the database is ready with a call trap
-                  echo
                   echo "Waiting for GCIS Database to be ready"
                   MSG="$(/usr/local/bin/delay_until_database_ready.sh)"
                   RESULT=$?
@@ -365,7 +369,6 @@ Resources:
                     echo $MSG
                   fi
 
-                  echo
                   echo "Starting GCIS"
                   sudo -u gcisops -i bash << EOG
                     perlbrew switch perl-5.20.0
@@ -581,8 +584,16 @@ Resources:
               command: '/tmp/create-gcis-db'
             '06_populate_gcis_db':
               command: '/tmp/populate-gcis-db'
-            '07_install_gcis':
-              command: '/tmp/setup-gcis'
+            '07_install_gcis_prereq':
+              command: '/tmp/setup-gcis-prereqs'
+            '08_install_perl'
+              command: '/tmp/setup-gcis-perl'
+            '09_setup_repo'
+              command: '/tmp/setup-gcis-repo'
+            '10_install_perl_modules'
+              command: '/tmp/setup-gcis-modules'
+            '11_startup_gcis'
+              command: '/tmp/start-gcis'
 
   ServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
