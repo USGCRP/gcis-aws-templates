@@ -186,6 +186,7 @@ Resources:
       VPCSecurityGroups:
       - !Ref RDSSecurityGroup
       DBInstanceClass: !Ref DbClass
+      DBInstanceIdentifier: !Sub '${AppId}-${Environment}-db'
       Engine: !Ref Engine
       StorageType: !If [ UseProvisionedIOPs, 'io1', 'gp2' ]
       Iops: !Ref ProvisionedIOPs
