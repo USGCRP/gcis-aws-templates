@@ -538,7 +538,7 @@ Mappings:
       StageVpcCIDR: '10.101.0.0/16'
       TestVpcCIDR: '10.102.0.0/16'
       DevVpcCIDR: '10.103.0.0/16'
-      TemplateTimeout: 45
+      TemplateTimeout: 90
 
   # https://wiki.centos.org/Cloud/AWS
   AmiByRegionAndEnv:

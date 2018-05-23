@@ -126,7 +126,7 @@ Mappings:
 
   Constants:
     ValueOf:
-      TemplateTimeout: 45
+      TemplateTimeout: 90
 
 Resources:
 
@@ -176,10 +176,10 @@ Resources:
         - OldestInstance
     CreationPolicy:
       ResourceSignal:
-        Timeout: PT60M
+        Timeout: PT30M
     UpdatePolicy:
       AutoScalingRollingUpdate:
-        PauseTime: PT45M
+        PauseTime: PT30M
         WaitOnResourceSignals: true
         MinInstancesInService: 1
 
@@ -229,7 +229,12 @@ Resources:
               content: !Sub |
                 #!/usr/bin/env bash
                 # Check if we're the lead instance or exit
-                /usr/local/bin/lead_instance.sh || exit
+                MSG="$(/usr/local/bin/lead_instance.sh)"
+                RESULT=$?
+                if [[ $RESULT == 1 ]]; then
+                  echo "Not lead instance. Skipping Role Create."
+                  exit
+                fi
                 export PGPASSWORD=${DbAdminUserPassword}
                 # Check if the gcisops role exists and exit if it does
                 psql -U ${DbAdminUserName} -d postgres -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "\du" | grep gcisops && echo "gcisops role exists" && exit
