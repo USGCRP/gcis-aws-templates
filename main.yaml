@@ -46,6 +46,7 @@ Metadata:
           - ProdEnvDbStorage
           - ProdEnvDbBackupRetention
           - ProdEnvDbMultiAZ
+          - ProdUseWebApplicationFirewall
 
       - Label:
           default: 'Stage Environment Configuration'
@@ -59,6 +60,7 @@ Metadata:
           - StageEnvDbStorage
           - StageEnvDbBackupRetention
           - StageEnvDbMultiAZ
+          - StageUseWebApplicationFirewall
 
       - Label:
           default: 'Test Environment Configuration'
@@ -71,6 +73,7 @@ Metadata:
           - TestEnvDbStorage
           - TestEnvDbBackupRetention
           - TestEnvDbMultiAZ
+          - TestUseWebApplicationFirewall
 
       - Label:
           default: 'Dev Environment Configuration'
@@ -83,6 +86,7 @@ Metadata:
           - DevEnvDbStorage
           - DevEnvDbBackupRetention
           - DevEnvDbMultiAZ
+          - DevUseWebApplicationFirewall
 
     ParameterLabels:
       ProjectName:
@@ -134,6 +138,8 @@ Metadata:
         default: 'DB Backups'
       ProdEnvDbMultiAZ:
         default: 'DB High Availability'
+      ProdUseWebApplicationFirewall:
+        default: 'Use Firewall Restricted Access'
 
       StageAllowTrafficFromIp:
         default: 'Allowed IPs'
@@ -153,6 +159,8 @@ Metadata:
         default: 'DB Backups'
       StageEnvDbMultiAZ:
         default: 'DB High Availability'
+      StageUseWebApplicationFirewall:
+        default: 'Use Firewall Restricted Access'
 
       TestEnvAsgRange:
         default: 'ASG Limits'
@@ -170,6 +178,8 @@ Metadata:
         default: 'DB Backups'
       TestEnvDbMultiAZ:
         default: 'DB High Availability'
+      TestUseWebApplicationFirewall:
+        default: 'Use Firewall Restricted Access'
 
       DevEnvAsgRange:
         default: 'ASG Limits'
@@ -187,6 +197,8 @@ Metadata:
         default: 'DB Backups'
       DevEnvDbMultiAZ:
         default: 'DB High Availability'
+      DevUseWebApplicationFirewall:
+        default: 'Use Firewall Restricted Access'
 
 Parameters:
 
@@ -318,6 +330,14 @@ Parameters:
     Type: String
     Default: 't2.large'
 
+  ProdUseWebApplicationFirewall:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: true
+
   StageAllowTrafficFromIp:
     Description: 'Limit viewers of site content'
     Type: String
@@ -377,6 +397,14 @@ Parameters:
     Type: String
     Default: 't2.large'
 
+  StageUseWebApplicationFirewall:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: true
+
   TestEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
@@ -430,6 +458,14 @@ Parameters:
     Description: 'Auto Scaling Group: Instance type of app servers'
     Type: String
     Default: 't2.small'
+
+  TestUseWebApplicationFirewall:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: true
 
   DevEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
@@ -485,6 +521,14 @@ Parameters:
     Type: String
     Default: 't2.small'
 
+  DevUseWebApplicationFirewall:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: true
+
   StackBaseUrl:
     Description: 'S3 bucket containing CF templates'
     Type: String
@@ -509,12 +553,16 @@ Conditions:
   #
 
   CreateProdEnv: !Equals [ 'true', !Ref CreateProd ]
+  ProdUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateStageEnv: !Equals [ 'true', !Ref CreateStage ]
+  StageUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateTestEnv: !Equals [ 'true', !Ref CreateTest ]
+  TestUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateDevEnv: !Equals [ 'true', !Ref CreateDev ]
+  DevUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   # Are any of the environments enabled? Having zero running environments is allowed
   CreateApp: !Or
@@ -687,6 +735,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
+        UseFirewall: !Ref ProdUseFirewall
 
   StageAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -719,6 +768,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
+        UseFirewall: !Ref StageUseFirewall
 
   TestAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -750,6 +800,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
+        UseFirewall: !Ref TestUseFirewall
 
   DevAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -781,6 +832,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
+        UseFirewall: !Ref DevUseFirewall
 
 Outputs:
 

@@ -122,6 +122,14 @@ Parameters:
     Description: 'S3 bucket containing CF templates'
     Type: String
 
+  UseFirewall:
+    Description: 'Use a WAF to restrict access'
+    Type: String
+    Default: true
+    AllowedValues:
+    - true
+    - false
+
 Mappings:
 
   Constants:
@@ -718,6 +726,46 @@ Resources:
                 - 'ssm.amazonaws.com'
             Action:
               - 'sts:AssumeRole'
+
+  # ~~~ Web Application Firewall ~~~
+
+  WafWebACL:
+    Type: 'AWS::WAF::WebACL'
+    Condition: UseFirewall
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-WebAppFirewall'
+      DefaultAction:
+        Type: BLOCK
+      MetricName: SecurityAutomationsMaliciousRequesters
+      Rules:
+        - Action:
+            Type: ALLOW
+          Priority: 10
+          RuleId: !Ref WafWhitelistRule
+
+  WafWhitelistRule:
+    Type: 'AWS::WAF::Rule'
+    Condition: UseFirewall
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-whitelist-rule'
+      MetricName: SecurityAutomationsWhitelistRule
+      Predicates:
+        - DataId: !Ref WafWhiteListIpSet
+          Negated: false
+          Type: IPMatch
+
+  WafWhiteListIpSet:
+    Type: 'AWS::WAF::IPSet'
+    Condition: UseFirewall
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-whitelist-ip-set'
+      IPSetDescriptors:
+        - Type: IPV4
+          Value: '205.175.221.72/28' # NCO Office
+        - Type: IPV4
+          Value: '198.85.226.0/24' # TSU
+
+  # ~~~ Database ~~~
 
   AppDB:
     Type: 'AWS::CloudFormation::Stack'
