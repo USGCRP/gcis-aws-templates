@@ -17,6 +17,7 @@ Metadata:
           - StackBaseUrl
           - ConfigBucketArn
           - DataBucketArn
+          - SSLCertificateArn
 
       - Label:
           default: 'Environments'
@@ -47,6 +48,8 @@ Metadata:
           - ProdEnvDbBackupRetention
           - ProdEnvDbMultiAZ
           - ProdUseWebApplicationFirewall
+          - ProdDomainAlias
+
 
       - Label:
           default: 'Stage Environment Configuration'
@@ -61,10 +64,12 @@ Metadata:
           - StageEnvDbBackupRetention
           - StageEnvDbMultiAZ
           - StageUseWebApplicationFirewall
+          - StageDomainAlias
 
       - Label:
           default: 'Test Environment Configuration'
         Parameters:
+          - TestAllowTrafficFromIp
           - TestEnvAsgRange
           - TestEnvInstanceType
           - TestEnvDbClass
@@ -74,10 +79,12 @@ Metadata:
           - TestEnvDbBackupRetention
           - TestEnvDbMultiAZ
           - TestUseWebApplicationFirewall
+          - TestDomainAlias
 
       - Label:
           default: 'Dev Environment Configuration'
         Parameters:
+          - DevAllowTrafficFromIp
           - DevEnvAsgRange
           - DevEnvInstanceType
           - DevEnvDbClass
@@ -87,6 +94,7 @@ Metadata:
           - DevEnvDbBackupRetention
           - DevEnvDbMultiAZ
           - DevUseWebApplicationFirewall
+          - DevDomainAlias
 
     ParameterLabels:
       ProjectName:
@@ -162,6 +170,8 @@ Metadata:
       StageUseWebApplicationFirewall:
         default: 'Use Firewall Restricted Access'
 
+      TestAllowTrafficFromIp:
+        default: 'Allowed IPs'
       TestEnvAsgRange:
         default: 'ASG Limits'
       TestEnvInstanceType:
@@ -181,6 +191,8 @@ Metadata:
       TestUseWebApplicationFirewall:
         default: 'Use Firewall Restricted Access'
 
+      DevAllowTrafficFromIp:
+        default: 'Allowed IPs'
       DevEnvAsgRange:
         default: 'ASG Limits'
       DevEnvInstanceType:
@@ -337,11 +349,16 @@ Parameters:
       - 'true'
       - 'false'
     Default: true
+  
+  ProdDomainAlias:
+    Description: 'Domain Name for this instance'
+    Type: String
+    Default: 'data.globalchange.gov'
 
   StageAllowTrafficFromIp:
     Description: 'Limit viewers of site content'
     Type: String
-    Default: '127.0.0.1/32'
+    Default: '0.0.0.0/0'
 
   StageEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
@@ -405,6 +422,16 @@ Parameters:
       - 'false'
     Default: true
 
+  StageDomainAlias:
+    Description: 'Domain Name for this instance'
+    Type: String
+    Default: 'data-stage.globalchange.gov'
+
+  TestAllowTrafficFromIp:
+    Description: 'Limit viewers of site content'
+    Type: String
+    Default: '0.0.0.0/0'
+
   TestEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
@@ -466,6 +493,16 @@ Parameters:
       - 'true'
       - 'false'
     Default: true
+
+  TestDomainAlias:
+    Description: 'Domain Name for this instance'
+    Type: String
+    Default: 'data-entry.globalchange.gov'
+
+  DevAllowTrafficFromIp:
+    Description: 'Limit viewers of site content'
+    Type: String
+    Default: '0.0.0.0/0'
 
   DevEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
@@ -529,6 +566,11 @@ Parameters:
       - 'false'
     Default: true
 
+  DevDomainAlias:
+    Description: 'Domain Name for this instance'
+    Type: String
+    Default: 'data-dev.globalchange.gov'
+
   StackBaseUrl:
     Description: 'S3 bucket containing CF templates'
     Type: String
@@ -544,6 +586,11 @@ Parameters:
     Type: String
     Default: ''
 
+  SSLCertificateArn:
+    Description: "AWS ARN for the Websites' Certificate"
+    Type: String
+    Default: ''
+
 
 Conditions:
 
@@ -553,16 +600,12 @@ Conditions:
   #
 
   CreateProdEnv: !Equals [ 'true', !Ref CreateProd ]
-  ProdUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateStageEnv: !Equals [ 'true', !Ref CreateStage ]
-  StageUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateTestEnv: !Equals [ 'true', !Ref CreateTest ]
-  TestUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   CreateDevEnv: !Equals [ 'true', !Ref CreateDev ]
-  DevUseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
 
   # Are any of the environments enabled? Having zero running environments is allowed
   CreateApp: !Or
@@ -586,7 +629,7 @@ Mappings:
       StageVpcCIDR: '10.101.0.0/16'
       TestVpcCIDR: '10.102.0.0/16'
       DevVpcCIDR: '10.103.0.0/16'
-      TemplateTimeout: 90
+      TemplateTimeout: 120
 
   # https://wiki.centos.org/Cloud/AWS
   AmiByRegionAndEnv:
@@ -668,6 +711,7 @@ Resources:
       Parameters:
         pVPCName: !Ref ProjectName
         pEnvironment: 'test'
+        pExternalHttpAllowed: 'true'
         pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
         pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
         pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
@@ -682,6 +726,7 @@ Resources:
       Parameters:
         pVPCName: !Ref ProjectName
         pEnvironment: 'dev'
+        pExternalHttpAllowed: 'true'
         pRegionAZ1Name: !Select [ 0, 'Fn::GetAZs': !Ref 'AWS::Region' ]
         pRegionAZ2Name: !Select [ 1, 'Fn::GetAZs': !Ref 'AWS::Region' ]
         pManagementCIDR: !FindInMap [ Constants, ValueOf, MgmtVpcCIDR ]
@@ -719,6 +764,7 @@ Resources:
         AppServerInstanceType: !Ref ProdEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref ProdEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref ProdEnvAsgRange ] ]
+        CertificateARN: !Ref SSLCertificateArn
         ConfigBucketArn: !Ref ConfigBucketArn
         DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
@@ -728,6 +774,7 @@ Resources:
         DbStorage: !Ref ProdEnvDbStorage
         DbBackupRetention: !Ref ProdEnvDbBackupRetention
         DbMultiAZ: !Ref ProdEnvDbMultiAZ
+        DomainAlias: !Ref ProdDomainAlias 
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'prod'
         ErrorTopic: !Ref ErrorTopic
@@ -735,7 +782,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
-        UseFirewall: !Ref ProdUseFirewall
+        UseWebApplicationFirewall: !Ref ProdUseWebApplicationFirewall
 
   StageAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -752,6 +799,7 @@ Resources:
         AppServerInstanceType: !Ref StageEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref StageEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref StageEnvAsgRange ] ]
+        CertificateARN: !Ref SSLCertificateArn
         ConfigBucketArn: !Ref ConfigBucketArn
         DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
@@ -761,6 +809,7 @@ Resources:
         DbStorage: !Ref StageEnvDbStorage
         DbBackupRetention: !Ref StageEnvDbBackupRetention
         DbMultiAZ: !Ref StageEnvDbMultiAZ
+        DomainAlias: !Ref StageDomainAlias 
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'stage'
         ErrorTopic: !Ref ErrorTopic
@@ -768,7 +817,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
-        UseFirewall: !Ref StageUseFirewall
+        UseWebApplicationFirewall: !Ref StageUseWebApplicationFirewall
 
   TestAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -780,10 +829,12 @@ Resources:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
+        AllowedCIDR: !Ref TestAllowTrafficFromIp
         AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'test' ]
         AppServerInstanceType: !Ref TestEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref TestEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref TestEnvAsgRange ] ]
+        CertificateARN: !Ref SSLCertificateArn
         ConfigBucketArn: !Ref ConfigBucketArn
         DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
@@ -793,6 +844,7 @@ Resources:
         DbStorage: !Ref TestEnvDbStorage
         DbBackupRetention: !Ref TestEnvDbBackupRetention
         DbMultiAZ: !Ref TestEnvDbMultiAZ
+        DomainAlias: !Ref TestDomainAlias 
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'test'
         ErrorTopic: !Ref ErrorTopic
@@ -800,7 +852,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
-        UseFirewall: !Ref TestUseFirewall
+        UseWebApplicationFirewall: !Ref TestUseWebApplicationFirewall
 
   DevAppEnvironment:
     Type: 'AWS::CloudFormation::Stack'
@@ -812,10 +864,12 @@ Resources:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl, 'environment.yaml' ] ]
       TimeoutInMinutes: !FindInMap [ Constants, ValueOf, TemplateTimeout ]
       Parameters:
+        AllowedCIDR: !Ref DevAllowTrafficFromIp
         AmiId: !FindInMap [ AmiByRegionAndEnv, !Ref 'AWS::Region', 'dev' ]
         AppServerInstanceType: !Ref DevEnvInstanceType
         AsgMinSize: !Select [ 0, !Split [ '-', !Ref DevEnvAsgRange ] ]
         AsgMaxSize: !Select [ 1, !Split [ '-', !Ref DevEnvAsgRange ] ]
+        CertificateARN: !Ref SSLCertificateArn
         ConfigBucketArn: !Ref ConfigBucketArn
         DataBucketArn: !Ref DataBucketArn
         DatabaseTemplate: !FindInMap [ Constants, ValueOf, DatabaseStack ]
@@ -825,6 +879,7 @@ Resources:
         DbStorage: !Ref DevEnvDbStorage
         DbBackupRetention: !Ref DevEnvDbBackupRetention
         DbMultiAZ: !Ref DevEnvDbMultiAZ
+        DomainAlias: !Ref DevDomainAlias 
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'dev'
         ErrorTopic: !Ref ErrorTopic
@@ -832,7 +887,7 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
         StackBaseUrl: !Ref StackBaseUrl
-        UseFirewall: !Ref DevUseFirewall
+        UseWebApplicationFirewall: !Ref DevUseWebApplicationFirewall
 
 Outputs:
 
@@ -848,3 +903,6 @@ Outputs:
     Condition: CreateBastion
     Description: 'The public IP of the bastion'
     Value: !GetAtt Bastion.Outputs.BastionIP
+
+  TemplateVersion:
+    Value: 0.0.1

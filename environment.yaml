@@ -27,6 +27,11 @@ Parameters:
     Type: Number
     Default: 1
 
+  CertificateARN:
+    Description: 'The certificate ARN for this site'
+    Type: String
+    Default: ''
+
   ConfigBucketArn:
     Description: 'ARN of S3 bucket that stores configuration files'
     Type: String
@@ -80,6 +85,11 @@ Parameters:
     - true
     - false
 
+  DomainAlias:
+    Description: 'The domain name for this instance'
+    Type: String
+    Default: ''
+
   EC2KeyPair:
     Description: 'The SSH key pair in your account to use for all other EC2 instance logins'
     Type: String
@@ -122,7 +132,7 @@ Parameters:
     Description: 'S3 bucket containing CF templates'
     Type: String
 
-  UseFirewall:
+  UseWebApplicationFirewall:
     Description: 'Use a WAF to restrict access'
     Type: String
     Default: true
@@ -130,11 +140,18 @@ Parameters:
     - true
     - false
 
+
+Conditions:
+
+  UseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
+
 Mappings:
 
   Constants:
     ValueOf:
       TemplateTimeout: 90
+      CloudFrontTtlS3: 15
+      CloudFrontTtlSearch: 15
 
 Resources:
 
@@ -153,11 +170,10 @@ Resources:
       DesiredCapacity: !Ref AsgMinSize
       Cooldown: 60
       AutoScalingGroupName: !Sub "${ProjectName}-${Environment}-AutoScalingGroup"
-#      HealthCheckType: 'ELB'
       HealthCheckType: 'EC2'
       HealthCheckGracePeriod: 600
-#      TargetGroupARNs:
-#        - !Ref TargetGroup
+      TargetGroupARNs:
+        - !Ref TargetGroup
       VPCZoneIdentifier:
         - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-app-subnet-1'
         - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-app-subnet-2'
@@ -343,14 +359,16 @@ Resources:
                     git clone https://github.com/USGCRP/gcis
                   EOU
 
-                  echo "Grabbing GCIS Config"
+                  echo "Grabbing GCIS Config & Google Secret"
                   # pull config from S3
                   REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
                   BUCKET=`echo '${ConfigBucketArn}' | cut -d ':' -f6`
-                  echo "region $REGION"
-                  echo "bucket $BUCKET"
+
                   aws s3 --region $REGION cp s3://$BUCKET/Tuba.conf.${Environment} ~gcisops/gcis/Tuba.conf
                   chown gcisops:gcisops ~gcisops/gcis/Tuba.conf
+
+                  aws s3 --region $REGION cp s3://$BUCKET/gcis_client_secrets.json /usr/local/etc/gcis_client_secrets.json
+                  chown gcisops:gcisops /usr/local/etc/gcis_client_secrets.json
             '/tmp/setup-gcis-modules':
                 mode: "000755"
                 content: !Sub |
@@ -594,13 +612,13 @@ Resources:
               command: '/tmp/populate-gcis-db'
             '07_install_gcis_prereq':
               command: '/tmp/setup-gcis-prereqs'
-            '08_install_perl'
+            '08_install_perl':
               command: '/tmp/setup-gcis-perl'
-            '09_setup_repo'
+            '09_setup_repo':
               command: '/tmp/setup-gcis-repo'
-            '10_install_perl_modules'
+            '10_install_perl_modules':
               command: '/tmp/setup-gcis-modules'
-            '11_startup_gcis'
+            '11_startup_gcis':
               command: '/tmp/start-gcis'
 
   ServerSecurityGroup:
@@ -618,6 +636,10 @@ Resources:
         - IpProtocol: 'tcp'
           FromPort: 80
           ToPort: 80
+          CidrIp: !Ref AllowedCIDR
+        - IpProtocol: 'tcp'
+          FromPort: 8080
+          ToPort: 8080
           CidrIp: !Ref AllowedCIDR
         - IpProtocol: 'tcp'
           FromPort: 443
@@ -761,9 +783,304 @@ Resources:
       Name: !Sub '${ProjectName}-${Environment}-whitelist-ip-set'
       IPSetDescriptors:
         - Type: IPV4
-          Value: '205.175.221.72/28' # NCO Office
+          Value: '205.175.221.66/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.67/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.68/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.69/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.70/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.71/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.72/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.73/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.74/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.75/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.76/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.77/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.78/32' # NCO Office
         - Type: IPV4
           Value: '198.85.226.0/24' # TSU
+
+
+  # ~~~ CloudFront Distribution ~~~
+
+  WebsiteCloudfront:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${ProjectName}-${Environment} Cloudfront Distribution'
+        WebACLId: !If [ UseFirewall, !Ref WafWebACL, !Ref 'AWS::NoValue' ]
+        Origins:
+          - DomainName: !GetAtt LoadBalancer.DNSName
+            Id: !Sub '${ProjectName}-${Environment}-Server'
+            CustomOriginConfig:
+              HTTPPort: '80'
+              OriginProtocolPolicy: http-only
+        Enabled: true
+        Aliases:
+          - !Ref DomainAlias
+        HttpVersion: 'http2'
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - GET
+          - HEAD
+          Compress: true
+          TargetOriginId: !Sub '${ProjectName}-${Environment}-Server'
+          MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100 #PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateARN
+          SslSupportMethod: sni-only
+#        Logging:
+#          Bucket: !GetAtt LoggingBucket.DomainName
+
+
+  # ~~~ Load Balancer ~~~
+
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-dmz-subnet-1'
+        - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-dmz-subnet-2'
+      SecurityGroups:
+        - !Ref LbSecurityGroup
+
+  LbSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub '${ProjectName}-${Environment} Server Access'
+      VpcId:
+        'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
+      SecurityGroupIngress: #TODO: Seemingly no easy way to turn a CSV list into SG rules?
+        # Open from anywhere
+#        - IpProtocol: tcp
+#          FromPort: 80
+#          ToPort: 80
+#          CidrIp: '0.0.0.0/0'
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.32.0.0/15'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.46.0.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.84.0.0/15'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.222.128.0/17'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.182.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.192.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.230.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.239.128.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.239.192.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.240.128.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.164.0/22'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.168.0/22'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.174.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.176.0/20'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.192.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.249.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.250.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.252.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.254.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '216.137.32.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.54.63.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.59.250.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.113.203.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.124.199.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.228.69.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.195.252.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.226.14.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.232.163.208/29'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.158.136.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.162.63.192/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.167.191.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.15.127.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.52.191.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.56.127.0/25'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.57.254.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.66.194.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.78.247.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.199.127.192/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.212.248.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.220.191.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.233.255.128/26'
+
+  LbListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId:
+        'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
+      Port: 8080
+      Protocol: HTTP
+      Matcher:
+        HttpCode: 200-299
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /
+      HealthCheckPort: 8080
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 30
+
+  ListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      ListenerArn: !Ref LbListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
 
   # ~~~ Database ~~~
 
@@ -785,3 +1102,4 @@ Resources:
         MultiAZDatabase: !Ref DbMultiAZ
         NotificationTopic: !Ref NotificationTopic
         ParamPrefix: !Sub '${ProjectName}/${Environment}'
+

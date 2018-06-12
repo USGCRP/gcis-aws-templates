@@ -92,7 +92,7 @@ Resources:
       KeyName: !Ref SshKeyPair
       Tags:
         - Key: Name
-          Value: Bastion Server
+          Value: !Sub '${AppId} Bastion Server'
       ImageId: !FindInMap [ AmiRegionMap, !Ref 'AWS::Region', AMI ]
       NetworkInterfaces:
         - NetworkInterfaceId: !Ref ENIProductionBastion
