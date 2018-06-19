@@ -33,7 +33,6 @@ Metadata:
       - Label:
           default: 'Bastion Host Configuration'
         Parameters:
-          - CreateBastionHost
           - BastionAllowedIPs
           - BastionKeyPair
 
@@ -127,8 +126,6 @@ Metadata:
       InstanceKeyPair:
         default: 'Server SSH Key'
 
-      CreateBastionHost:
-        default: 'Create Bastion?'
       BastionAllowedIPs:
         default: 'Allowed IPs'
       BastionKeyPair:
@@ -280,14 +277,6 @@ Parameters:
     Description: 'Operations Secret Key.'
     Type: String
     NoEcho: true
-
-  CreateBastionHost:
-    Description: 'Should we create a bastion host within the management VPC?'
-    Type: String
-    Default: true
-    AllowedValues:
-      - true
-      - false
 
   BastionAllowedIPs:
     Description: 'IPs allowed to connect to the bastion host'
@@ -512,7 +501,7 @@ Parameters:
   TestDomainAlias:
     Description: 'Domain Name for this instance'
     Type: String
-    Default: 'data-entry.globalchange.gov'
+    Default: 'data-test.globalchange.gov'
 
   DevAllowTrafficFromIp:
     Description: 'Limit viewers of site content'
@@ -629,8 +618,6 @@ Conditions:
     - !Equals [ 'true', !Ref CreateTest ]
     - !Equals [ 'true', !Ref CreateDev ]
 
-  # The bastion host can be turned of when not needed
-  CreateBastion: !Equals [ 'true', !Ref CreateBastionHost ]
 
 Mappings:
 
@@ -751,7 +738,6 @@ Resources:
 
   Bastion:
     Type: 'AWS::CloudFormation::Stack'
-    Condition: CreateBastion
     DependsOn: MgmtVpc
     Properties:
       TemplateURL: !Join [ '', [ !Ref StackBaseUrl,  !FindInMap [ Constants, ValueOf, BastionStack ] ]]
@@ -923,7 +909,6 @@ Outputs:
     Value: v0.0.1-SNAPSHOT
 
   BastionHostIP:
-    Condition: CreateBastion
     Description: 'The public IP of the bastion'
     Value: !GetAtt Bastion.Outputs.BastionIP
 
