@@ -264,6 +264,7 @@ Resources:
                 echo "export PGUSER=gcisops" >>~gcisops/.bashrc
                 echo "export PGPASSWORD=${DbAdminUserPassword}" >>~gcisops/.bashrc
 
+                mkdir -p ~gcisops/.aws
                 echo "[default]" >>~gcisops/.aws/config
                 echo "region = us-east-1" >>~gcisops/.aws/config
                 echo "output = json" >>~gcisops/.aws/config
@@ -361,8 +362,8 @@ Resources:
                 tar xzvf latest_gcis_database.tar.gz
 
                 # new
-                psql gcis -q -f ./gcis_latest.dump
-                psql gcis -c "alter database gcis set search_path='gcis_metadata';"
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
+                psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -c "alter database gcis set search_path='gcis_metadata';"
 
                 # old
                 #psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_schema.dump
@@ -571,7 +572,7 @@ Resources:
                 DATE=`date +%Y%m%d`
                 tar czvf $TIMESTAMP_gcis_database.tar.gz $TIMESTAMP_gcis.dump
 
-                aws s3 --region $REGION cp s3://$BUCKET/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+                aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
                 aws s3 --region $REGION cp s3://$BUCKET/$DATE/$TIMESTAMP_gcis_database.tar.gz /tmp/gcis_data
 
                 rm -rf /tmp/gcis_data/*
@@ -595,7 +596,7 @@ Resources:
 
                 mkdir -p /tmp/gcis_data
                 rm -rf /tmp/gcis_data/*
-                aws s3 --region $REGION cp s3://$BUCKET/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+                aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 /usr/local/bin/gcis_stop
 
