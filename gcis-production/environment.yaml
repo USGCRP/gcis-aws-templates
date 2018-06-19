@@ -354,8 +354,8 @@ Resources:
                 REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
-                mkdir /tmp/gcis_data
-                aws s3 --region $REGION cp s3://$BUCKET/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+                mkdir -p /tmp/gcis_data
+                aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 # Populate the data into the database
                 cd /tmp/gcis_data
@@ -443,6 +443,8 @@ Resources:
                 ###
                 echo "Installing GCIS Perl prereqs"
                 sudo -u gcisops -i bash << EOF
+                  source ~/.bashrc
+                  perlbrew switch perl-5.20.3
                   cd gcis
                   cpanm --installdeps --force .
                 EOF
@@ -467,6 +469,7 @@ Resources:
 
                 echo "Starting GCIS"
                 sudo -u gcisops -i bash << EOG
+                  perlbrew switch perl-5.20.3
                   /usr/local/bin/gcis_start
                 EOG
             # GCIS start & stop scripts
