@@ -18,6 +18,8 @@ Metadata:
           - ConfigBucketArn
           - DataBucketArn
           - SSLCertificateArn
+          - OperationsIAMAccessKey
+          - OperationsIAMSecretKey
 
       - Label:
           default: 'Environments'
@@ -109,6 +111,10 @@ Metadata:
         default: 'Config Bucket ARN'
       DataBucketArn:
         default: 'Database Bucket ARN'
+      OperationsIAMAccessKey:
+        default: 'Operational Account Access Key'
+      OperationsIAMSecretKey:
+        default: 'Operational Account Secret Key'
 
       CreateProd:
         default: 'Create Production?'
@@ -266,6 +272,15 @@ Parameters:
     Description: 'SSH key to access server instances'
     Type: AWS::EC2::KeyPair::KeyName
 
+  OperationsIAMAccessKey:
+    Description: 'Operations Access Key. Should have S3 readwrite'
+    Type: String
+
+  OperationsIAMSecretKey:
+    Description: 'Operations Secret Key.'
+    Type: String
+    NoEcho: true
+
   CreateBastionHost:
     Description: 'Should we create a bastion host within the management VPC?'
     Type: String
@@ -349,7 +364,7 @@ Parameters:
       - 'true'
       - 'false'
     Default: true
-  
+
   ProdDomainAlias:
     Description: 'Domain Name for this instance'
     Type: String
@@ -774,10 +789,12 @@ Resources:
         DbStorage: !Ref ProdEnvDbStorage
         DbBackupRetention: !Ref ProdEnvDbBackupRetention
         DbMultiAZ: !Ref ProdEnvDbMultiAZ
-        DomainAlias: !Ref ProdDomainAlias 
+        DomainAlias: !Ref ProdDomainAlias
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'prod'
         ErrorTopic: !Ref ErrorTopic
+        IAMAccessKey: !Ref OperationsIAMAccessKey
+        IAMSecretKey: !Ref OperationsIAMSecretKey
         LogRetentionInDays: !Ref LogRetentionPeriod
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
@@ -809,10 +826,12 @@ Resources:
         DbStorage: !Ref StageEnvDbStorage
         DbBackupRetention: !Ref StageEnvDbBackupRetention
         DbMultiAZ: !Ref StageEnvDbMultiAZ
-        DomainAlias: !Ref StageDomainAlias 
+        DomainAlias: !Ref StageDomainAlias
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'stage'
         ErrorTopic: !Ref ErrorTopic
+        IAMAccessKey: !Ref OperationsIAMAccessKey
+        IAMSecretKey: !Ref OperationsIAMSecretKey
         LogRetentionInDays: !Ref LogRetentionPeriod
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
@@ -844,10 +863,12 @@ Resources:
         DbStorage: !Ref TestEnvDbStorage
         DbBackupRetention: !Ref TestEnvDbBackupRetention
         DbMultiAZ: !Ref TestEnvDbMultiAZ
-        DomainAlias: !Ref TestDomainAlias 
+        DomainAlias: !Ref TestDomainAlias
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'test'
         ErrorTopic: !Ref ErrorTopic
+        IAMAccessKey: !Ref OperationsIAMAccessKey
+        IAMSecretKey: !Ref OperationsIAMSecretKey
         LogRetentionInDays: !Ref LogRetentionPeriod
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
@@ -879,10 +900,12 @@ Resources:
         DbStorage: !Ref DevEnvDbStorage
         DbBackupRetention: !Ref DevEnvDbBackupRetention
         DbMultiAZ: !Ref DevEnvDbMultiAZ
-        DomainAlias: !Ref DevDomainAlias 
+        DomainAlias: !Ref DevDomainAlias
         EC2KeyPair: !Ref InstanceKeyPair
         Environment: 'dev'
         ErrorTopic: !Ref ErrorTopic
+        IAMAccessKey: !Ref OperationsIAMAccessKey
+        IAMSecretKey: !Ref OperationsIAMSecretKey
         LogRetentionInDays: !Ref LogRetentionPeriod
         NotificationTopic: !Ref NotificationTopic
         ProjectName: !Ref ProjectName
