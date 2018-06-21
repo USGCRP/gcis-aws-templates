@@ -1,16 +1,25 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: >-
-  AWS CloudFormation Sample Template EC2InstanceWithSecurityGroupSample: Create
-  an Amazon EC2 instance running the Amazon Linux AMI. The AMI is chosen based
-  on the region in which the stack is run. This example creates an EC2 security
-  group for the instance to give you SSH access. **WARNING** This template
-  creates an Amazon EC2 instance. You will be billed for the AWS resources used
-  if you create a stack from this template.
+  GCIS individual dev box
 Parameters:
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
     Type: 'AWS::EC2::KeyPair::KeyName'
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  DeveloperName:
+    Description: Name of the developer the instance is for, i.e. "Jane Smith"
+    Type: String
+  DeveloperHandle:
+    Description: Username of the developer the instance is for, i.e. "jsmith"
+    Type: String
+  DeveloperPass:
+    Description: Password for the developer for first login only.
+    Type: String
+    NoEcho: true
+  GcisopsPass:
+    Description: Password for the gcisops user.
+    Type: String
+    NoEcho: true
   InstanceType:
     Description: WebServer EC2 instance type
     Type: String
@@ -71,14 +80,35 @@ Parameters:
       - cc2.8xlarge
       - cg1.4xlarge
     ConstraintDescription: must be a valid EC2 instance type.
-  SSHLocation:
-    Description: The IP address range that can be used to SSH to the EC2 instances
+  OfficeIP:
+    Description: The user's home IP address range that can be used to access the EC2 instance
     Type: String
     MinLength: '9'
     MaxLength: '18'
-    Default: 0.0.0.0/0
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  UserHomeIP:
+    Description: The user's home IP address range that can be used to access the EC2 instance
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  ConfigBucketArn:
+    Description: 'ARN of S3 bucket that stores configuration files'
+    Type: String
+  DataBucketArn:
+    Description: 'ARN of S3 bucket that stores database dumps'
+    Type: String
+  IAMAccessKey:
+    Description: 'Operations Access Key. Should have S3 readwrite'
+    Type: String
+  IAMSecretKey:
+    Description: 'Operations Secret Key.'
+    Type: String
+    NoEcho: true
+
+
 Mappings:
   AWSInstanceType2Arch:
     t1.micro:
@@ -368,6 +398,12 @@ Mappings:
       HVM64: ami-3e60745c
       HVMG2: NOT_SUPPORTED
 Resources:
+
+  AppServerLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: 365
+
   EC2Instance:
     Type: 'AWS::EC2::Instance'
     Properties:
@@ -375,38 +411,568 @@ Resources:
       SecurityGroups:
         - !Ref InstanceSecurityGroup
       KeyName: !Ref KeyName
-      ImageId: !FindInMap 
-        - AWSRegionArch2AMI
-        - !Ref 'AWS::Region'
-        - !FindInMap 
-          - AWSInstanceType2Arch
-          - !Ref InstanceType
-          - Arch
+      ImageId: ami-a22323d8
+      Tags:
+        -
+          Key:  "Name"
+          Value: !Sub 'Dev Box - ${DeveloperName}'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+
+          hostnamectl set-hostname "data-${DeveloperHandle}.globalchange.gov"
+          echo "data-${DeveloperHandle}.globalchange.gov" > /etc/hostname
+          sed -i 's/127.0.0.1 localhost/127.0.0.1 localhost data-${DeveloperHandle}.globalchange.gov/' /etc/hosts
+
+          apt-get -y update
+          apt-get install -y awscli git screen perlbrew curl fortune cowsay
+          echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
+          service sshd restart
+
+          apt-get install -y python-setuptools
+          /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          cp -v /usr/local/lib/python2*/dist-packages/aws_cfn_bootstrap*/init/ubuntu/cfn-hup /etc/init.d
+          chmod +x /etc/init.d/cfn-hup
+          /opt/aws/bin/cfn-init -v -c server --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          server:
+            - "base"
+        base:
+          files:
+            # Setup scripts for GCIS
+            '/tmp/README.txt':
+              mode: '000755'
+              content: !Sub |
+                Welcome to your new dev box, ${DeveloperName}!
+
+                This machine gives you your own throwaway copy of GCIS. Nothing you change on it will affect production, either data or code. The
+                instance is running under the gcisops user.
+
+                Accessing your GCIS instance:
+                  data-${DeveloperHandle}.globalchange.gov:8080
+
+                (If that doesn't work, prod your GCIS Software Engineer to set the DNS up!)
+
+                On your own user you have copies of the repos 'gcis', 'gcis-scripts', and 'gcis-pl-client' installed. They are under 'repos'.
+                You may need to install individual CPAN modules for any particular script. You would do that by typing 'cpanm install Module::Name'
+                (Replace Module::Name as appropriate)
+
+                ****
+                *****
+                ******
+                On your first login please run:
+                  perlbrew switch perl-5.20.3
+
+                Switch to gcisops and do it too!
+                  su - gcisops
+                  perlbrew switch perl-5.20.3
+                ******
+                *****
+                ****
+
+                Updating the data on your GCIS instance:
+                  su - gcisops
+                  perlbrew switch perl-5.20.3 # only the first time
+                  sync_gcis_content_from_aws
+
+
+
+
+            '/tmp/config-postgres':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # setup trust auth
+                sed -i 's/local   all             all                                     peer/local   all             all                                     trust/' /etc/postgresql/9.3/main/pg_hba.conf
+                service postgresql restart
+            '/tmp/setup-dev-user':
+              mode: '000755'
+              content: !Sub |
+                useradd -d /home/${DeveloperHandle} -s '/bin/bash' -m -p $(echo "${DeveloperPass}" | openssl passwd -1 -stdin) ${DeveloperHandle}
+                adduser ${DeveloperHandle} sudo
+
+                sudo -iu ${DeveloperHandle} << EOP
+                  mkdir ~${DeveloperHandle}/.ssh/
+                  cp ~ubuntu/.ssh/authorized_keys ~${DeveloperHandle}/.ssh/authorized_keys
+
+                  echo "export PGHOST=localhost" >>~${DeveloperHandle}/.bashrc
+                  echo "export PGPORT=5342" >>~${DeveloperHandle}/.bashrc
+                  echo "export PGDATABASE=gcis" >>~${DeveloperHandle}/.bashrc
+                  echo "export PGUSER=${DeveloperHandle}" >>~${DeveloperHandle}/.bashrc
+
+                  perlbrew init
+                  echo "source ~/perl5/perlbrew/etc/bashrc" >>~/.bashrc
+                  source ~/.bashrc
+                  perlbrew install perl-5.20.3 #long running
+                  perlbrew install-cpanm
+                  perlbrew install-patchperl
+                  source ~/.bashrc
+                  perlbrew switch perl-5.20.3
+
+
+                  mkdir -p repos
+                  git clone https://github.com/USGCRP/gcis repos/gcis
+                  git clone https://github.com/USGCRP/gcis repos/gcis-scripts
+                  git clone https://github.com/USGCRP/gcis repos/gcis-pl-client
+
+                  cd gcis-pl-client
+                  cpanm --installdeps .
+
+                  echo "export PERL5LIB=$PERL5LIB:~/repos/gcis/lib/:~/repos/gcis-pl-client/lib/:~/repos/gcis-scripts/lib/" >>~/.bashrc
+                  echo "export PATH=$PATH:~/repos/gcis/bin/:~/repos/gcis-pl-client/bin/:~/repos/gcis-scripts/bin/" >>~/.bashrc
+
+                  cp /tmp/README.txt ~/README.txt
+                EOP
+            '/tmp/setup-gcisops-user':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                useradd -d /home/gcisops -s '/bin/bash' -m -p $(echo "${GcisopsPass}" | openssl passwd -1 -stdin) gcisops
+                adduser gcisops sudo
+
+                echo "export PGDATABASE=gcis" >>~gcisops/.bashrc
+                echo "export PGUSER=gcisops" >>~gcisops/.bashrc
+
+                mkdir -p ~gcisops/.aws
+                echo "[default]" >>~gcisops/.aws/config
+                echo "region = us-east-1" >>~gcisops/.aws/config
+                echo "output = json" >>~gcisops/.aws/config
+                echo "aws_access_key_id = ${IAMAccessKey}" >>~gcisops/.aws/config
+                echo "aws_secret_access_key = ${IAMSecretKey}" >>~gcisops/.aws/config
+                chown gcisops:gcisops ~gcisops/.aws
+                chown gcisops:gcisops ~gcisops/.aws/config
+            '/tmp/setup-gcisops-role':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if the gcisops role exists and exit if it does
+                sudo su - postgres -c "psql -d postgres -c '\du'" | grep gcisops && echo 'gcisops role exists' && exit
+                echo "Creating gcisops role"
+                sudo su - postgres -c "createuser -s -e gcisops"
+            '/tmp/setup-dev-role':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if the ${DeveloperHandle} role exists and exit if it does
+                sudo su - postgres -c "psql -d postgres -c '\du'" | grep ${DeveloperHandle} && echo '${DeveloperHandle} role exists' && exit
+                echo "Creating ${DeveloperHandle} role"
+                sudo su - postgres -c "createuser -s -e ${DeveloperHandle}"
+                echo "export PGDATABASE=gcis" >>~${DeveloperHandle}/.bashrc
+                echo "export PGUSER=${DeveloperHandle}" >>~${DeveloperHandle}/.bashrc
+            '/tmp/create-gcis-db':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if the gcis database already exists and exit if it does
+                MSG="$(/usr/local/bin/database_exists_check.sh)"
+                RESULT=$?
+                if [[ $RESULT == 0 ]]; then
+                  echo "Database Already Exists"
+                  exit
+                fi
+                # create the db
+                echo "Creating gcis db"
+                sudo -u gcisops -i bash << EOT
+                  createdb gcis
+                EOT
+                # OLD: sudo su - gcisops -c "createdb gcis"
+            '/tmp/populate-gcis-db':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if the gcis database is already populated
+                MSG="$(/usr/local/bin/database_populated_check.sh)"
+                RESULT=$?
+                if [[ $RESULT == 0 ]]; then
+                  echo "Database Already Populated"
+                  exit
+                fi
+
+                echo "Populating gcis db"
+                BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
+                REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+
+                sudo -u gcisops -i bash << EOT
+                  # pull tar from data S3
+
+                  mkdir -p /tmp/gcis_data
+                  aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+
+                  # Populate the data into the database
+                  cd /tmp/gcis_data
+                  tar xzvf latest_gcis_database.tar.gz
+                
+                  psql -d gcis -q -f ./gcis_latest.dump
+                  psql -d gcis -c "alter database gcis set search_path='gcis_metadata';"
+                EOT
+            '/tmp/setup-gcis-prereqs':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Installing system prereqs"
+                apt-get -y update
+                apt-get -y install postgresql-contrib-9.3 libpg-hstore-perl \
+                  postgresql-9.3 postgresql-server-dev-9.3 libuuid1 uuid-dev make \
+                  openssl libssl-dev libpq-dev graphviz libxml2 raptor2-utils curl \
+                  perlbrew git screen
+                pip install awscli
+            '/tmp/setup-gcis-perl':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Installing perlbrew"
+                sudo -u gcisops -i bash << EOT
+                  perlbrew init
+                  echo "source ~/perl5/perlbrew/etc/bashrc" >>~/.bashrc
+                  source ~/.bashrc
+                  perlbrew install perl-5.20.3 #long running
+                  perlbrew install-cpanm
+                  perlbrew install-patchperl
+                  source ~/.bashrc
+                  perlbrew switch perl-5.20.3
+                EOT
+            '/tmp/setup-gcis-repo':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Cloning gcis"
+
+                REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+                BUCKET=`echo '${ConfigBucketArn}' | cut -d ':' -f6`
+                mkdir -p /var/local/www/assets-back
+                chown gcisops:gcisops /var/local/www/assets-back
+
+                sudo -u gcisops -i bash << EOU
+                  mkdir -p repos
+                  git clone https://github.com/USGCRP/gcis repos/gcis
+                  mkdir -p repos/gcis/log
+
+                  echo "Grabbing GCIS Config & Google Secret"
+                  # pull config from S3
+
+                  aws s3 --region $REGION cp s3://$BUCKET/Tuba.conf.${DeveloperHandle} ~gcisops/repos/gcis/Tuba.conf
+                  aws s3 sync --region $REGION s3://$BUCKET/assets /var/local/www/assets-back
+                  aws s3 --region $REGION cp s3://$BUCKET/gcis_client_secrets.json /tmp/gcis_client_secrets.json
+                EOU
+                mv /tmp/gcis_client_secrets.json /usr/local/etc/
+            '/tmp/setup-gcis-modules':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Installing GCIS Perl prereqs"
+                sudo -u gcisops -i bash << EOF
+                  source ~/.bashrc
+                  perlbrew switch perl-5.20.3
+                  cd repos/gcis
+
+                  cpanm --installdeps --force .
+                EOF
+            '/tmp/start-gcis':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Confirm the database is ready with a call trap
+                echo "Waiting for GCIS Database to be ready"
+                MSG="$(/usr/local/bin/delay_until_database_ready.sh)"
+                RESULT=$?
+                if [[ $RESULT == 1 ]]; then
+                  echo $MSG
+                  exit 1
+                else
+                  echo $MSG
+                fi
+
+                echo "Starting GCIS"
+                sudo -u gcisops -i bash << EOG
+                  perlbrew switch perl-5.20.3
+                  /usr/local/bin/gcis_start
+                EOG
+            # GCIS start & stop scripts
+            '/usr/local/bin/gcis_start':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+
+                export MOJO_LOG_LEVEL=debug
+                export MOJO_MODE=production
+
+                cd /home/gcisops/repos/gcis
+                hypnotoad ./bin/tuba
+            '/usr/local/bin/gcis_stop':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                cd /home/gcisops/repos/gcis
+                hypnotoad -s ./bin/tuba
+            # GCIS Content Management Scripts
+            '/usr/local/bin/sync_gcis_content_from_aws':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+
+                ###
+                # Pull Content from the AWS S3
+                #
+                # Meant to be run on the data-stable GCIS environments
+                # Updates this environment's database & assets to match AWS S3
+                ###
+
+                REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
+                BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
+
+                # aws sync assets
+                aws s3 sync --region $REGION s3://$BUCKET/assets /var/local/www/assets-back
+
+                mkdir -p /tmp/gcis_data
+                rm -rf /tmp/gcis_data/*
+                aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
+
+                /usr/local/bin/gcis_stop
+
+                dropdb gcis
+                createdb gcis
+                # Populate the data into the database
+                cd /tmp/gcis_data
+                tar xzvf latest_gcis_database.tar.gz
+                psql gcis -q -f ./gcis_latest.dump
+                psql gcis -c "alter database gcis set search_path='gcis_metadata';"
+
+                /usr/local/bin/gcis_start
+            # Utility scripts for checking the ready state
+            '/usr/local/bin/delay_until_database_ready.sh':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                DELAY=30
+                NOTREADY=1
+                MAXATTEMPTS=5
+                ATTEMPTS=1
+                MSG="$(/usr/local/bin/database_ready.sh)"
+                NOTREADY=$?
+                echo "Attempt: $ATTEMPTS/$MAXATTEMPTS, delay $DELAY notready $NOTREADY || "
+                while (( $NOTREADY )); do
+                  if [[ $MAXATTEMPTS == $ATTEMPTS ]]; then
+                    echo "Timed out waiting for database to be ready"
+                    exit 1
+                  fi
+                  sleep $DELAY
+                  MSG="$(/usr/local/bin/database_ready.sh)"
+                  NOTREADY=$?
+                  DELAY=$(( DELAY * 2 ))
+                  ATTEMPTS=$(( ATTEMPTS + 1 ))
+                  echo "Attempt: $ATTEMPTS/$MAXATTEMPTS, delay $DELAY notready $NOTREADY || "
+                done
+                echo "Found database to be ready after $ATTEMPTS attempts"
+                exit 0
+            '/usr/local/bin/database_ready.sh':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                # Check if the gcis database exists and return 1 if it doesnt
+                MSG="$(/usr/local/bin/database_exists_check.sh)"
+                RESULT=$?
+                if [[ $RESULT == 1 ]]; then
+                  echo "Database Not Ready: Doesn't Exist"
+                  exit 1
+                fi
+                # Check if the gcis database is populated and return 1 if it isn't
+                MSG2="$(/usr/local/bin/database_populated_check.sh)"
+                RESULT2=$?
+                if [[ $RESULT2 == 1 ]]; then
+                  echo "Database Not Ready: Not Populated"
+                  exit 1
+                fi
+                echo "Database ready"
+                exit 0
+            '/usr/local/bin/database_exists_check.sh':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Checking DB exists"
+                psql -U gcisops -d postgres \
+                  -c "\l" | grep -q gcis && exit 0
+                echo "DB doesn't exist"
+                exit 1
+            '/usr/local/bin/database_populated_check.sh':
+              mode: "000755"
+              content: !Sub |
+                #!/usr/bin/env bash
+                echo "Checking DB populated"
+                psql -U gcisops -d gcis \
+                  -c "\d" | grep -q "No relations found" || exit 0
+                echo "DB not populated"
+                exit 1
+            # Other general setup scripts & config
+            '/etc/cron.d/cloudwatch':
+              mode: '000644'
+              content: |
+                */5 * * * * root /opt/aws-scripts-mon/mon-put-instance-data.pl --mem-used --mem-util --swap-used --disk-space-util --disk-path=/ --auto-scaling --from-cron
+            '/etc/cron.d/updates':
+              mode: '000644'
+              content: |
+                15 * * * * root apt-get -y update
+            '/tmp/cloudwatchlog.conf':
+              content: !Sub |
+                [general]
+                state_file = /var/awslogs/state/agent-state
+                use_gzip_http_content_encoding = true
+                logging_config_file = /var/awslogs/etc/awslogs.conf
+                [/var/log/audit/audit.log]
+                file = /var/log/audit/audit.log
+                log_stream_name = {instance_id}-/var/log/audit/audit.log
+                log_group_name = ${AppServerLogGroup}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}-/var/log/messages
+                log_group_name = ${AppServerLogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}-/var/log/secure
+                log_group_name = ${AppServerLogGroup}
+            '/tmp/config-monitoring':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                apt-get -y install zip unzip
+                apt-get -y install libwww-perl libdatetime-perl
+                cd /opt
+                curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
+                unzip CloudWatchMonitoringScripts-1.2.1.zip
+                rm CloudWatchMonitoringScripts-1.2.1.zip
+                curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O
+                python ./awslogs-agent-setup.py -n --region ${AWS::Region} -c /tmp/cloudwatchlog.conf
+                rm -f ./awslogs-agent-setup.py
+                service awslogs start
+                update-rc.d awslogs enable
+            '/etc/systemd/system/awslogs.service':
+              content: |
+                [Unit]
+                Description=The CloudWatch Logs agent
+                After=rc-local.service
+
+                [Service]
+                Type=simple
+                Restart=always
+                KillMode=process
+                TimeoutSec=infinity
+                PIDFile=/var/awslogs/state/awslogs.pid
+                ExecStart=/var/awslogs/bin/awslogs-agent-launcher.sh --start --background --pidfile $PIDFILE --user awslogs --chuid awslogs &
+
+                [Install]
+                WantedBy=multi-user.target
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.Server.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --region ${AWS::Region} --resource Server
+                runas=root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+          packages:
+            apt:
+              jq: []
+          commands:
+              '01_monitoring':
+                command: '/tmp/config-monitoring'
+              '02_update':
+                command: 'apt-get -y update'
+              '03_install_gcis_prereq':
+                command: '/tmp/setup-gcis-prereqs'
+              '04_postgres_config':
+                command: '/tmp/config-postgres'
+              '05_create_gcisops_user':
+                command: '/tmp/setup-gcisops-user'
+              '06_create_gcisops_role':
+                command: '/tmp/setup-gcisops-role'
+              '07_create_gcis_db':
+                command: '/tmp/create-gcis-db'
+              '08_populate_gcis_db':
+                command: '/tmp/populate-gcis-db'
+              '09_install_perl':
+                command: '/tmp/setup-gcis-perl'
+              '10_setup_repo':
+                command: '/tmp/setup-gcis-repo'
+              '11_install_perl_modules':
+                command: '/tmp/setup-gcis-modules'
+              '12_startup_gcis':
+                command: '/tmp/start-gcis'
+              '13_setup_dev_user':
+                command: '/tmp/setup-dev-user'
+              '14_create_dev_role':
+                command: '/tmp/setup-dev-role'
+
   InstanceSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: Enable SSH access via port 22
+      GroupDescription: Enable SSH, HTTP, HTTPS, and 8080 access
       SecurityGroupIngress:
+        # Office Access
         - IpProtocol: tcp
           FromPort: '22'
           ToPort: '22'
-          CidrIp: !Ref SSHLocation
+          CidrIp: !Ref OfficeIP
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref OfficeIP
+        - IpProtocol: 'tcp'
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref OfficeIP
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref OfficeIP
+        # User Home Access
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref UserHomeIP
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref UserHomeIP
+        - IpProtocol: 'tcp'
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref UserHomeIP
+        - IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref UserHomeIP
 Outputs:
   InstanceId:
     Description: InstanceId of the newly created EC2 instance
     Value: !Ref EC2Instance
   AZ:
     Description: Availability Zone of the newly created EC2 instance
-    Value: !GetAtt 
+    Value: !GetAtt
       - EC2Instance
       - AvailabilityZone
   PublicDNS:
     Description: Public DNSName of the newly created EC2 instance
-    Value: !GetAtt 
+    Value: !GetAtt
       - EC2Instance
       - PublicDnsName
   PublicIP:
     Description: Public IP address of the newly created EC2 instance
-    Value: !GetAtt 
+    Value: !GetAtt
       - EC2Instance
       - PublicIp
