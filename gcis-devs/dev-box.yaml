@@ -425,7 +425,7 @@ Resources:
           sed -i 's/127.0.0.1 localhost/127.0.0.1 localhost data-${DeveloperHandle}.globalchange.gov/' /etc/hosts
 
           apt-get -y update
-          apt-get install -y awscli git screen perlbrew curl fortune cowsay
+          apt-get install -y awscli git screen perlbrew curl fortune cowsay nginx
           echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
           service sshd restart
 
@@ -448,11 +448,12 @@ Resources:
               content: !Sub |
                 Welcome to your new dev box, ${DeveloperName}!
 
-                This machine gives you your own throwaway copy of GCIS. Nothing you change on it will affect production, either data or code. The
-                instance is running under the gcisops user.
+                This machine gives you your own throwaway copy of GCIS. Nothing you change on it 
+                will affect production, either data or code. The instance is running under the 
+                gcisops user.
 
-                Accessing your GCIS instance:
-                  data-${DeveloperHandle}.globalchange.gov:8080
+                Accessing your GCIS instance via the browser or command line:
+                  https://data-${DeveloperHandle}.globalchange.gov
 
                 (If that doesn't work, prod your GCIS Software Engineer to set the DNS up!)
 
@@ -460,27 +461,21 @@ Resources:
                 You may need to install individual CPAN modules for any particular script. You would do that by typing 'cpanm install Module::Name'
                 (Replace Module::Name as appropriate)
 
-                ****
-                *****
-                ******
-                On your first login please run:
+                **On your first login please run:**
                   perlbrew switch perl-5.20.3
 
-                Switch to gcisops and do it too!
+                **Switch to gcisops and do it too!**
                   su - gcisops
                   perlbrew switch perl-5.20.3
-                ******
-                *****
-                ****
+                
 
                 Updating the data on your GCIS instance:
                   su - gcisops
-                  perlbrew switch perl-5.20.3 # only the first time
                   sync_gcis_content_from_aws
 
-
-
-
+                **IMPORTANT NOTE**
+                While you can consider this machine relatively stable, it is not permanent!
+                Do not store any data here long term, copy it down to your home machine or an AWS S3 bucket!
             '/tmp/config-postgres':
               mode: '000755'
               content: !Sub |
@@ -488,16 +483,72 @@ Resources:
                 # setup trust auth
                 sed -i 's/local   all             all                                     peer/local   all             all                                     trust/' /etc/postgresql/9.3/main/pg_hba.conf
                 service postgresql restart
+            '/tmp/config-nginx':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                BUCKET=`echo "${ConfigBucketArn}" | cut -d ":" -f6`
+
+                sudo -iu gcisops << EOT
+                  aws s3 cp s3://$BUCKET/star.globalchange.gov.crt /tmp
+                  aws s3 cp s3://$BUCKET/star.globalchange.gov.key /tmp
+                EOT
+
+                mv /tmp/star.globalchange.gov.crt /etc/nginx/
+                mv /tmp/star.globalchange.gov.key /etc/nginx/
+                chown root:root /etc/nginx/star.globalchange.gov.crt
+                chown root:root /etc/nginx/star.globalchange.gov.key
+
+                mv /tmp/gcis-nginx-config /etc/nginx/sites-available/default
+                service nginx restart
+            '/tmp/gcis-nginx-config':
+              mode: '000755'
+              content: !Sub |
+                server {
+                    listen 80;
+                    return 301 https://$host$request_uri;
+                }
+
+                server {
+
+                    listen 443;
+                    server_name data-${DeveloperHandle}.globalchange.gov;
+
+                    ssl_certificate           /etc/nginx/star.globalchange.gov.crt;
+                    ssl_certificate_key       /etc/nginx/star.globalchange.gov.key;
+
+                    ssl on;
+                    ssl_session_cache  builtin:1000  shared:SSL:10m;
+                    ssl_protocols  TLSv1 TLSv1.1 TLSv1.2;
+                    ssl_ciphers HIGH:!aNULL:!eNULL:!EXPORT:!CAMELLIA:!DES:!MD5:!PSK:!RC4;
+                    ssl_prefer_server_ciphers on;
+
+                    access_log            /var/log/nginx/data-${DeveloperHandle}.access.log;
+
+                    location / {
+
+                      proxy_set_header        Host $host;
+                      proxy_set_header X-Forwarded-Base $scheme://$host;
+
+                      # Fix the “It appears that your reverse proxy set up is broken" error.
+                      proxy_pass          http://localhost:8080;
+                      proxy_read_timeout  90;
+
+                      proxy_redirect      http://localhost:8080 https://data-${DeveloperHandle}.globalchange.gov;
+                    }
+                  }
             '/tmp/setup-dev-user':
               mode: '000755'
               content: !Sub |
                 useradd -d /home/${DeveloperHandle} -s '/bin/bash' -m -p $(echo "${DeveloperPass}" | openssl passwd -1 -stdin) ${DeveloperHandle}
                 adduser ${DeveloperHandle} sudo
 
-                sudo -iu ${DeveloperHandle} << EOP
-                  mkdir ~${DeveloperHandle}/.ssh/
-                  cp ~ubuntu/.ssh/authorized_keys ~${DeveloperHandle}/.ssh/authorized_keys
+                mkdir ~${DeveloperHandle}/.ssh/
+                cp ~ubuntu/.ssh/authorized_keys ~${DeveloperHandle}/.ssh/authorized_keys
+                chown -R ${DeveloperHandle}:${DeveloperHandle} ~${DeveloperHandle}/.ssh/
 
+                sudo -iu ${DeveloperHandle} << EOP
+                  
                   echo "export PGHOST=localhost" >>~${DeveloperHandle}/.bashrc
                   echo "export PGPORT=5342" >>~${DeveloperHandle}/.bashrc
                   echo "export PGDATABASE=gcis" >>~${DeveloperHandle}/.bashrc
@@ -518,7 +569,8 @@ Resources:
                   git clone https://github.com/USGCRP/gcis repos/gcis-scripts
                   git clone https://github.com/USGCRP/gcis repos/gcis-pl-client
 
-                  cd gcis-pl-client
+                  cd repos/gcis-pl-client
+                  cpanm install --force String::Diff # Buggy tests make this fail.
                   cpanm --installdeps .
 
                   echo "export PERL5LIB=$PERL5LIB:~/repos/gcis/lib/:~/repos/gcis-pl-client/lib/:~/repos/gcis-scripts/lib/" >>~/.bashrc
@@ -542,8 +594,11 @@ Resources:
                 echo "output = json" >>~gcisops/.aws/config
                 echo "aws_access_key_id = ${IAMAccessKey}" >>~gcisops/.aws/config
                 echo "aws_secret_access_key = ${IAMSecretKey}" >>~gcisops/.aws/config
-                chown gcisops:gcisops ~gcisops/.aws
-                chown gcisops:gcisops ~gcisops/.aws/config
+                chown -R gcisops:gcisops ~gcisops/.aws
+
+                mkdir ~gcisops/.ssh/
+                cp ~ubuntu/.ssh/authorized_keys ~gcisops/.ssh/authorized_keys
+                chown -R gcisops:gcisops ~gcisops/.ssh/
             '/tmp/setup-gcisops-role':
               mode: '000755'
               content: !Sub |
@@ -643,7 +698,7 @@ Resources:
                 REGION=`curl -s http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | jq -r .region`
                 BUCKET=`echo '${ConfigBucketArn}' | cut -d ':' -f6`
                 mkdir -p /var/local/www/assets-back
-                chown gcisops:gcisops /var/local/www/assets-back
+                chown -R gcisops:gcisops /var/local/www/assets-back
 
                 sudo -u gcisops -i bash << EOU
                   mkdir -p repos
@@ -696,7 +751,7 @@ Resources:
               content: !Sub |
                 #!/usr/bin/env bash
 
-                export MOJO_LOG_LEVEL=debug
+                export MOJO__LEVEL=debug
                 export MOJO_MODE=production
 
                 cd /home/gcisops/repos/gcis
@@ -814,7 +869,7 @@ Resources:
               mode: '000644'
               content: |
                 15 * * * * root apt-get -y update
-            '/tmp/cloudwatchlog.conf':
+            '/tmp/cloudwatch.conf':
               content: !Sub |
                 [general]
                 state_file = /var/awslogs/state/agent-state
@@ -913,9 +968,11 @@ Resources:
                 command: '/tmp/setup-gcis-modules'
               '12_startup_gcis':
                 command: '/tmp/start-gcis'
-              '13_setup_dev_user':
+              '13_config_nginx':
+                command: '/tmp/config-nginx'
+              '14_setup_dev_user':
                 command: '/tmp/setup-dev-user'
-              '14_create_dev_role':
+              '15_create_dev_role':
                 command: '/tmp/setup-dev-role'
 
   InstanceSecurityGroup:
