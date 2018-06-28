@@ -295,7 +295,7 @@ Parameters:
   ProdEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
-    Default: '1-1'
+    Default: '1-3'
     AllowedPattern: '\d+-\d+'
 
   ProdEnvDbClass:
@@ -367,7 +367,7 @@ Parameters:
   StageEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
-    Default: '1-1'
+    Default: '1-2'
     AllowedPattern: '\d+-\d+'
 
   StageEnvDbClass:
@@ -439,7 +439,7 @@ Parameters:
   TestEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
-    Default: '1-1'
+    Default: '1-2'
     AllowedPattern: '\d+-\d+'
 
   TestEnvDbClass:
@@ -511,7 +511,7 @@ Parameters:
   DevEnvAsgRange:
     Description: 'Range of servers allowed in the format min-max (ex. 1-4)'
     Type: String
-    Default: '1-1'
+    Default: '1-2'
     AllowedPattern: '\d+-\d+'
 
   DevEnvDbClass:

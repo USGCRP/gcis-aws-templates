@@ -23,9 +23,9 @@ Parameters:
     Default: 1
 
   AsgMaxSize:
-    Description: 'The minimum number of instances active within an Auto Scaling Group'
+    Description: 'The max number of instances active within an Auto Scaling Group'
     Type: Number
-    Default: 1
+    Default: 2
 
   CertificateARN:
     Description: 'The certificate ARN for this site'
@@ -161,6 +161,11 @@ Mappings:
       TemplateTimeout: 90
       CloudFrontTtlS3: 15
       CloudFrontTtlSearch: 15
+  AllowedMethods:
+    prod: "GET;HEAD"
+    test: "GET;HEAD"
+    dev: "DELETE;GET;HEAD;OPTIONS;PATCH;POST;PUT"
+    stage: "DELETE;GET;HEAD;OPTIONS;PATCH;POST;PUT"
 
 Resources:
 
@@ -228,11 +233,17 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/usr/bin/env bash
-          hostnamectl set-hostname "${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)"
+
+          DOMAIN="${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)"
+          hostnamectl set-hostname "data-${Environment}.globalchange.gov"
+          echo "data-${Environment}.globalchange.gov" > /etc/hostname
+          sed -i 's/127.0.0.1 localhost/127.0.0.1 localhost data-${Environment}.globalchange.gov ${Environment}-app-$(curl --silent http://169.254.169.254/latest/meta-data/instance-id | tail -c 5)/' /etc/hosts
+
           apt-get -y update
           apt-get install -y awscli
           echo -e "\nPermitRootLogin no" >> /etc/ssh/sshd_config
           service sshd restart
+
           apt-get install -y python-setuptools
           /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
           cp -v /usr/local/lib/python2*/dist-packages/aws_cfn_bootstrap*/init/ubuntu/cfn-hup /etc/init.d
@@ -270,6 +281,7 @@ Resources:
                 echo "output = json" >>~gcisops/.aws/config
                 echo "aws_access_key_id = ${IAMAccessKey}" >>~gcisops/.aws/config
                 echo "aws_secret_access_key = ${IAMSecretKey}" >>~gcisops/.aws/config
+                chown -R gcisops:gcisops ~gcisops/.aws
             '/tmp/setup-gcisops-role':
               mode: '000755'
               content: !Sub |
@@ -361,17 +373,9 @@ Resources:
                 cd /tmp/gcis_data
                 tar xzvf latest_gcis_database.tar.gz
 
-                # new
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -c "alter database gcis set search_path='gcis_metadata';"
 
-                # old
-                #psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_schema.dump
-                #psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_contents_1.dump
-                #psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -f ./*_database_contents_2.dump
-
-                # Set the default path
-                #psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
             '/tmp/setup-gcis-prereqs':
               mode: "000755"
               content: !Sub |
@@ -429,8 +433,9 @@ Resources:
                 chown gcisops:gcisops ~gcisops/gcis/Tuba.conf
 
                 mkdir -p /var/local/www/assets-back
-                chown gcisops:gcisops /var/local/www
-                chown gcisops:gcisops /var/local/www/assets-back
+                chown -R gcisops:gcisops /var/local/www
+                aws s3 sync --region $REGION s3://$BUCKET/assets /var/local/www/assets-back
+
 
                 aws s3 --region $REGION cp s3://$BUCKET/gcis_client_secrets.json /usr/local/etc/gcis_client_secrets.json
                 chown gcisops:gcisops /usr/local/etc/gcis_client_secrets.json
@@ -470,6 +475,11 @@ Resources:
                 echo "Starting GCIS"
                 sudo -u gcisops -i bash << EOG
                   perlbrew switch perl-5.20.3
+                  export PGHOST=${AppDB.Outputs.HostName}
+                  export PGPORT=${AppDB.Outputs.Port}
+                  export PGDATABASE=gcis
+                  export PGUSER=gcisops
+                  export PGPASSWORD=${DbAdminUserPassword}
                   /usr/local/bin/gcis_start
                 EOG
             # GCIS start & stop scripts
@@ -562,7 +572,7 @@ Resources:
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
                 # aws sync assets
-                aws s3 sync --region $REGION /var/local/www/assets-back s3://gcis-databucket-test/assets
+                aws s3 sync --region $REGION /var/local/www/assets-back s3://$BUCKET/assets
 
                 mkdir -p /tmp/gcis_data
                 rm -rf /tmp/gcis_data/*
@@ -575,8 +585,8 @@ Resources:
                 DATE=`date +%Y%m%d`
                 tar czvf $TIMESTAMP_gcis_database.tar.gz $TIMESTAMP_gcis.dump
 
-                aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
-                aws s3 --region $REGION cp s3://$BUCKET/$DATE/$TIMESTAMP_gcis_database.tar.gz /tmp/gcis_data
+                aws s3 --region $REGION cp /tmp/gcis_data/latest_gcis_database.tar.gz s3://$BUCKET/database/latest/
+                aws s3 --region $REGION cp /tmp/gcis_data/$TIMESTAMP_gcis_database.tar.gz  s3://$BUCKET/database/$DATE/
 
                 rm -rf /tmp/gcis_data/*
             '/usr/local/bin/sync_content_from_aws.sh':
@@ -595,14 +605,16 @@ Resources:
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
                 # aws sync assets
-                aws s3 sync --region $REGION s3://gcis-databucket-test/assets /var/local/www/assets-back
+                aws s3 sync --region $REGION s3://$BUCKET/assets /var/local/www/assets-back
 
                 mkdir -p /tmp/gcis_data
                 rm -rf /tmp/gcis_data/*
                 aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 /usr/local/bin/gcis_stop
-
+                
+                dropdb gcis
+                createdb gcis
                 # Populate the data into the database
                 cd /tmp/gcis_data
                 tar xzvf latest_gcis_database.tar.gz
@@ -1034,14 +1046,16 @@ Resources:
             CustomOriginConfig:
               HTTPPort: '80'
               OriginProtocolPolicy: http-only
+            OriginCustomHeaders:
+              - HeaderName: "X-Forwarded-Base"
+                HeaderValue: !Sub "data-${Environment}.globalchange.gov"
+
         Enabled: true
         Aliases:
           - !Ref DomainAlias
         HttpVersion: 'http2'
         DefaultCacheBehavior:
-          AllowedMethods:
-          - GET
-          - HEAD
+          AllowedMethods: !Split [;, !FindInMap [ AllowedMethods, ValueOf, ${Environment} ] ]
           Compress: true
           TargetOriginId: !Sub '${ProjectName}-${Environment}-Server'
           MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
@@ -1064,16 +1078,18 @@ Resources:
   LoadBalancer:
     Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
     Properties:
+      Name: !Sub '${ProjectName}-${Environment}-LoadBalancer'
       Subnets:
         - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-dmz-subnet-1'
         - 'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-dmz-subnet-2'
       SecurityGroups:
-        - !Ref LbSecurityGroup
+        - !Ref LbSecurityGroup1
+        - !Ref LbSecurityGroup2
 
-  LbSecurityGroup:
+  LbSecurityGroup1:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: !Sub '${ProjectName}-${Environment} Server Access'
+      GroupDescription: !Sub '${ProjectName}-${Environment} Server Access1'
       VpcId:
         'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
       SecurityGroupIngress: #TODO: Seemingly no easy way to turn a CSV list into SG rules?
@@ -1242,11 +1258,63 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
+  LbSecurityGroup2:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub '${ProjectName}-${Environment} Server Access 2'
+      VpcId:
+        'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
+      SecurityGroupIngress:
+        # Open from anywhere
+#        - IpProtocol: tcp
+#          FromPort: 80
+#          ToPort: 80
+#          CidrIp: '0.0.0.0/0'
+
           CidrIp: '52.220.191.0/26'
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: '54.233.255.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.35.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '143.204.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '18.216.170.128/25'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.216.51.0/25'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.124.128.0/17'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.47.139.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '64.252.64.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '70.132.0.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '71.152.0.0/17'
+        
+
+
 
   LbListener:
     Type: 'AWS::ElasticLoadBalancingV2::Listener'
