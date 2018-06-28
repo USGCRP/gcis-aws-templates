@@ -913,4 +913,4 @@ Outputs:
     Value: !GetAtt Bastion.Outputs.BastionIP
 
   TemplateVersion:
-    Value: 0.0.1
+    Value: 0.0.2

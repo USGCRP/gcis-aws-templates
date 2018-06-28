@@ -153,6 +153,8 @@ Parameters:
 Conditions:
 
   UseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
+  ReadOnlyEnv: !Or [ !Equals [ !Ref Environment, "prod" ], !Equals [ !Ref Environment, "test" ] ]
+  ReadWriteEnv: !Or [ !Equals [ !Ref Environment, "dev" ], !Equals [ !Ref Environment, "stage" ] ]
 
 Mappings:
 
@@ -161,11 +163,6 @@ Mappings:
       TemplateTimeout: 90
       CloudFrontTtlS3: 15
       CloudFrontTtlSearch: 15
-  AllowedMethods:
-    prod: "GET;HEAD"
-    test: "GET;HEAD"
-    dev: "DELETE;GET;HEAD;OPTIONS;PATCH;POST;PUT"
-    stage: "DELETE;GET;HEAD;OPTIONS;PATCH;POST;PUT"
 
 Resources:
 
@@ -1034,8 +1031,51 @@ Resources:
 
   # ~~~ CloudFront Distribution ~~~
 
-  WebsiteCloudfront:
+  WebsiteCloudfrontRO:
     Type: 'AWS::CloudFront::Distribution'
+    Condition: ReadOnlyEnv
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${ProjectName}-${Environment} Cloudfront Distribution'
+        WebACLId: !If [ UseFirewall, !Ref WafWebACL, !Ref 'AWS::NoValue' ]
+        Origins:
+          - DomainName: !GetAtt LoadBalancer.DNSName
+            Id: !Sub '${ProjectName}-${Environment}-Server'
+            CustomOriginConfig:
+              HTTPPort: '80'
+              OriginProtocolPolicy: http-only
+            OriginCustomHeaders:
+              - HeaderName: "X-Forwarded-Base"
+                HeaderValue: !Sub "https://data-${Environment}.globalchange.gov"
+
+        Enabled: true
+        Aliases:
+          - !Ref DomainAlias
+        HttpVersion: 'http2'
+        DefaultCacheBehavior:
+          AllowedMethods: 
+            - GET
+            - HEAD
+          Compress: true
+          TargetOriginId: !Sub '${ProjectName}-${Environment}-Server'
+          MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100 #PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateARN
+          SslSupportMethod: sni-only
+#        Logging:
+#          Bucket: !GetAtt LoggingBucket.DomainName
+
+
+  WebsiteCloudfrontRW:
+    Type: 'AWS::CloudFront::Distribution'
+    Condition: ReadWriteEnv
     Properties:
       DistributionConfig:
         Comment: !Sub '${ProjectName}-${Environment} Cloudfront Distribution'
@@ -1055,7 +1095,14 @@ Resources:
           - !Ref DomainAlias
         HttpVersion: 'http2'
         DefaultCacheBehavior:
-          AllowedMethods: !Split [;, !FindInMap [ AllowedMethods, ValueOf, ${Environment} ] ]
+          AllowedMethods: 
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
           Compress: true
           TargetOriginId: !Sub '${ProjectName}-${Environment}-Server'
           MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
@@ -1258,6 +1305,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
+          CidrIp: '52.220.191.0/26'
   LbSecurityGroup2:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -1265,13 +1313,6 @@ Resources:
       VpcId:
         'Fn::ImportValue': !Sub '${ProjectName}-${Environment}-vpc'
       SecurityGroupIngress:
-        # Open from anywhere
-#        - IpProtocol: tcp
-#          FromPort: 80
-#          ToPort: 80
-#          CidrIp: '0.0.0.0/0'
-
-          CidrIp: '52.220.191.0/26'
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
@@ -1379,3 +1420,9 @@ Resources:
         NotificationTopic: !Ref NotificationTopic
         ParamPrefix: !Sub '${ProjectName}/${Environment}'
 
+
+Outputs:
+
+
+  TemplateVersion:
+    Value: 0.0.2

@@ -181,7 +181,7 @@ Resources:
   SecurityGroupBastion:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
-      GroupDescription: 'SG for Bastion Instances'
+      GroupDescription: !Sub 'SG for ${AppId} Bastion Instances'
       VpcId:
         'Fn::ImportValue': !Sub '${AppId}-management-vpc'
       SecurityGroupIngress:
@@ -202,7 +202,10 @@ Outputs:
 
   ArtifactVersion:
     Description: Artifact version
-    Value: v0.0.5
+    Value: v0.0.6
+
+  TemplateVersion:
+    Value: 0.0.6
 
   BastionIP:
     Description: 'The public IP of the bastion'
