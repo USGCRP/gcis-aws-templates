@@ -1061,7 +1061,7 @@ Resources:
           MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
           DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
           ForwardedValues:
-            QueryString: false
+            QueryString: true
             Cookies:
               Forward: none
           ViewerProtocolPolicy: redirect-to-https
@@ -1108,9 +1108,9 @@ Resources:
           MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
           DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
           ForwardedValues:
-            QueryString: false
+            QueryString: true
             Cookies:
-              Forward: none
+              Forward: all
           ViewerProtocolPolicy: redirect-to-https
         PriceClass: PriceClass_100 #PriceClass_All
         ViewerCertificate:
