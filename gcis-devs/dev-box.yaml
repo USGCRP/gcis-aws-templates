@@ -566,8 +566,8 @@ Resources:
 
                   mkdir -p repos
                   git clone https://github.com/USGCRP/gcis repos/gcis
-                  git clone https://github.com/USGCRP/gcis repos/gcis-scripts
-                  git clone https://github.com/USGCRP/gcis repos/gcis-pl-client
+                  git clone https://github.com/USGCRP/gcis-scripts repos/gcis-scripts
+                  git clone https://github.com/USGCRP/gcis-pl-client repos/gcis-pl-client
 
                   cd repos/gcis-pl-client
                   cpanm install --force String::Diff # Buggy tests make this fail.
