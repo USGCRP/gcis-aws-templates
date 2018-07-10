@@ -392,7 +392,7 @@ Resources:
                 apt-get -y install postgresql-contrib-9.6 libpg-hstore-perl \
                   postgresql-9.6 postgresql-server-dev-9.6 libuuid1 uuid-dev make \
                   openssl libssl-dev libpq-dev graphviz libxml2 raptor2-utils curl \
-                  perlbrew git
+                  perlbrew git graphicsmagick
             '/tmp/setup-gcis-perl':
               mode: "000755"
               content: !Sub |
