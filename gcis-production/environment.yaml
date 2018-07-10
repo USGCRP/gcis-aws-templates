@@ -272,6 +272,10 @@ Resources:
                 echo "export PGUSER=gcisops" >>~gcisops/.bashrc
                 echo "export PGPASSWORD=${DbAdminUserPassword}" >>~gcisops/.bashrc
 
+                mkdir ~gcisops/.ssh/
+                cp ~ubuntu/.ssh/authorized_keys ~gcisops/.ssh/authorized_keys
+                chown -R gcisops:gcisops ~gcisops/.ssh/
+
                 mkdir -p ~gcisops/.aws
                 echo "[default]" >>~gcisops/.aws/config
                 echo "region = us-east-1" >>~gcisops/.aws/config
@@ -373,6 +377,7 @@ Resources:
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
                 psql -U gcisops -d gcis -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -c "alter database gcis set search_path='gcis_metadata';"
 
+                rm -rf /tmp/gcis_data
             '/tmp/setup-gcis-prereqs':
               mode: "000755"
               content: !Sub |
@@ -381,9 +386,11 @@ Resources:
                 # Install GCIS required system prereqs
                 ###
                 echo "Installing system prereqs"
+                add-apt-repository "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -sc)-pgdg main"
+                wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
                 apt-get -y update
-                apt-get -y install postgresql-contrib-9.3 libpg-hstore-perl \
-                  postgresql-9.3 postgresql-server-dev-9.3 libuuid1 uuid-dev make \
+                apt-get -y install postgresql-contrib-9.6 libpg-hstore-perl \
+                  postgresql-9.6 postgresql-server-dev-9.6 libuuid1 uuid-dev make \
                   openssl libssl-dev libpq-dev graphviz libxml2 raptor2-utils curl \
                   perlbrew git
             '/tmp/setup-gcis-perl':
@@ -575,15 +582,18 @@ Resources:
                 rm -rf /tmp/gcis_data/*
 
                 cd /tmp/gcis_data
-                pg_dump gcis > gcis_latest.dump
-                tar czvf latest_gcis_database.tar.gz gcis_latest.dump
-                TIMESTAMP=`date +%Y%m%d_%H%M%S`
-                cp gcis_latest.dump $TIMESTAMP_gcis.dump
-                DATE=`date +%Y%m%d`
-                tar czvf $TIMESTAMP_gcis_database.tar.gz $TIMESTAMP_gcis.dump
+                echo "Creating a dump of the GCIS database"
+                pg_dump -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis > gcis_latest.dump
+                echo "Creating a latest dump & tar of the GCIS database"
+                tar czf latest_gcis_database.tar.gz gcis_latest.dump
+                cp gcis_latest.dump `date +%Y%m%d_%H%M%S`_gcis.dump
+                echo "Creating a dated dump & tar of the GCIS database"
+                tar czf `date +%Y%m%d`_gcis_database.tar.gz `date +%Y%m%d_%H%M%S`_gcis.dump
 
+                echo "Syncing latest tar to AWS"
                 aws s3 --region $REGION cp /tmp/gcis_data/latest_gcis_database.tar.gz s3://$BUCKET/database/latest/
-                aws s3 --region $REGION cp /tmp/gcis_data/$TIMESTAMP_gcis_database.tar.gz  s3://$BUCKET/database/$DATE/
+                echo "Syncing dated tar to AWS"
+                aws s3 --region $REGION cp /tmp/gcis_data/`date +%Y%m%d`_gcis_database.tar.gz  s3://$BUCKET/database/`date +%Y%m%d`/
 
                 rm -rf /tmp/gcis_data/*
             '/usr/local/bin/sync_content_from_aws.sh':
@@ -602,23 +612,28 @@ Resources:
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
                 # aws sync assets
+                echo "Updating assets from the S3"
                 aws s3 sync --region $REGION s3://$BUCKET/assets /var/local/www/assets-back
 
                 mkdir -p /tmp/gcis_data
                 rm -rf /tmp/gcis_data/*
+                echo "Pulling the latest DB from the S3"
                 aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
-                /usr/local/bin/gcis_stop
-                
-                dropdb gcis
-                createdb gcis
+                echo "Stopping GCIS"
+                gcis_stop
+
+                echo "Reseting the database"
+                dropdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
+                createdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
                 # Populate the data into the database
                 cd /tmp/gcis_data
                 tar xzvf latest_gcis_database.tar.gz
-                psql gcis -q -f ./gcis_latest.dump
-                psql gcis -c "alter database gcis set search_path='gcis_metadata';"
+                psql -d gcis -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
+                psql -d gcis -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
 
-                /usr/local/bin/gcis_start
+                echo "Starting GCIS"
+                gcis_start
             # Utility scripts for checking the ready state
             '/usr/local/bin/delay_until_database_ready.sh':
               mode: "000755"
