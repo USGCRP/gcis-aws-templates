@@ -602,7 +602,7 @@ Resources:
                 aws s3 --region $REGION cp /tmp/gcis_data/`date +%Y%m%d`_gcis_database.tar.gz  s3://$BUCKET/database/`date +%Y%m%d`/
 
                 rm -rf /tmp/gcis_data/*
-            '/usr/local/bin/backup_content_to_aws.sh'
+            '/usr/local/bin/backup_content_to_aws.sh':
               mode: "000755"
               content: !Sub |
                 #!/usr/bin/env bash
