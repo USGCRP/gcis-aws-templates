@@ -576,6 +576,7 @@ Resources:
                 BUCKET=`echo "${DataBucketArn}" | cut -d ":" -f6`
 
                 # aws sync assets
+                echo "Syncing assets to AWS"
                 aws s3 sync --region $REGION /var/local/www/assets-back s3://$BUCKET/assets
 
                 mkdir -p /tmp/gcis_data
@@ -585,7 +586,7 @@ Resources:
                 echo "Creating a dump of the GCIS database"
                 pg_dump -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis > gcis_latest.dump
                 echo "Creating a latest dump & tar of the GCIS database"
-                tar czf latest_gcis_database.tar.gz gcis_latest.dump
+                tar czvf latest_gcis_database.tar.gz gcis_latest.dump
                 cp gcis_latest.dump `date +%Y%m%d_%H%M%S`_gcis.dump
                 echo "Creating a dated dump & tar of the GCIS database"
                 tar czf `date +%Y%m%d`_gcis_database.tar.gz `date +%Y%m%d_%H%M%S`_gcis.dump
@@ -621,7 +622,10 @@ Resources:
                 aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 echo "Stopping GCIS"
-                gcis_stop
+                /usr/local/bin/gcis_stop
+
+                echo "Letting GCIS stop, waiting 5 seconds."
+                sleep 5
 
                 echo "Reseting the database"
                 dropdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis
@@ -629,11 +633,11 @@ Resources:
                 # Populate the data into the database
                 cd /tmp/gcis_data
                 tar xzvf latest_gcis_database.tar.gz
-                psql -d gcis -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
-                psql -d gcis -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} -c "alter database gcis set search_path='gcis_metadata';"
+                psql -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -q -f ./gcis_latest.dump
+                psql -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis -c "alter database gcis set search_path='gcis_metadata';"
 
                 echo "Starting GCIS"
-                gcis_start
+                /usr/local/bin/gcis_start
             # Utility scripts for checking the ready state
             '/usr/local/bin/delay_until_database_ready.sh':
               mode: "000755"
@@ -818,7 +822,6 @@ Resources:
           packages:
             apt:
               jq: []
-              postgresql: []
           services:
             sysvinit:
               cfn-hup:
@@ -1079,6 +1082,8 @@ Resources:
             QueryString: true
             Cookies:
               Forward: none
+            Headers:
+              - 'Accept'
           ViewerProtocolPolicy: redirect-to-https
         PriceClass: PriceClass_100 #PriceClass_All
         ViewerCertificate:
@@ -1126,6 +1131,8 @@ Resources:
             QueryString: true
             Cookies:
               Forward: all
+            Headers:
+              - 'Accept'
           ViewerProtocolPolicy: redirect-to-https
         PriceClass: PriceClass_100 #PriceClass_All
         ViewerCertificate:
@@ -1440,4 +1447,4 @@ Outputs:
 
 
   TemplateVersion:
-    Value: 0.0.2
+    Value: 0.0.3

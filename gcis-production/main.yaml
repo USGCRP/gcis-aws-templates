@@ -601,7 +601,6 @@ Mappings:
       DevVpcCIDR: '10.103.0.0/16'
       TemplateTimeout: 120
 
-  # https://wiki.centos.org/Cloud/AWS
   AmiByRegionAndEnv:
     us-east-1:
       prod: ami-a22323d8
