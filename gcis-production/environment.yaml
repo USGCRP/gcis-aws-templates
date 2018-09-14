@@ -622,7 +622,7 @@ Resources:
 
                 # aws sync assets
                 echo "Syncing assets to AWS"
-                aws s3 sync --region $REGION /var/local/www/assets-back s3://$BUCKET/${Environment}_backup/${!DATE}/assets
+                aws s3 sync --region $REGION /var/local/www/assets-back s3://$BUCKET/${Environment}_backup/assets
 
                 mkdir -p /tmp/gcis_data
                 rm -rf /tmp/gcis_data/*
@@ -632,12 +632,13 @@ Resources:
                 pg_dump -U gcisops -p 5432 -h gcis-stage-db.cecx5cvo54xh.us-east-1.rds.amazonaws.com gcis > gcis_latest.dump
                 cp gcis_latest.dump ${!DATE}_gcis.dump
                 echo "Creating a dated backup of the GCIS database"
-                tar czvf ${!DATE}_gcis_database.tar.gz ${!DATE}_gcis.dump
+                tar czvf latest_gcis_database.tar.gz ${!DATE}_gcis.dump
+                rm *.dump
 
                 echo "Sending dated backup to AWS"
-                aws s3 --region $REGION cp /tmp/gcis_data/${!DATE}_gcis_database.tar.gz  s3://$BUCKET/${Environment}_backup/${!DATE}/database/
+                aws s3 --region $REGION sync /tmp/gcis_data/ s3://$BUCKET/${Environment}_backup/database/
 
-                rm -rf /tmp/gcis_data/*
+                rm -rf /tmp/gcis_data
             '/usr/local/bin/sync_content_from_aws.sh':
               mode: "000755"
               content: !Sub |
