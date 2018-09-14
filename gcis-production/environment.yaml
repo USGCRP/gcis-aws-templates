@@ -1166,14 +1166,16 @@ Resources:
             - DELETE
           Compress: true
           TargetOriginId: !Sub '${ProjectName}-${Environment}-Server'
-          MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
-          DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          MaxTTL: 0
+          MinTTL: 0
+          DefaultTTL: 0
           ForwardedValues:
             QueryString: true
             Cookies:
               Forward: all
             Headers:
-              - 'Accept'
+              Name: *
+              Quantity: 1
           ViewerProtocolPolicy: redirect-to-https
         PriceClass: PriceClass_100 #PriceClass_All
         ViewerCertificate:
