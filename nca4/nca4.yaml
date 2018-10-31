@@ -13,10 +13,6 @@ Parameters:
     Description: 'Domain alias used on certificate'
     Type: String
 
-  RateLimitWAFRuleName:
-    Description: 'WAF Rule for Rate Limiting Name'
-    Type: String
-
   AdminNotifyEmail:
     Description: 'Notification email for application environment events'
     Type: String
@@ -86,7 +82,7 @@ Resources:
     Properties:
       DistributionConfig:
         Comment: !Sub '${AWS::StackName} Cloudfront Distribution'
-        WebACLId: !If [UseIPFirewall, !Ref WafWebACL, !Ref WafLimitACL]
+        WebACLId: !If [UseIPFirewall, !Ref WafWebACL, !Ref 'AWS::NoValue']
         Origins:
           - DomainName: !Select [2, !Split [/, !GetAtt WebsiteBucket.WebsiteURL]]
             Id: S3Origin
@@ -229,27 +225,9 @@ Resources:
       MetricName: FirewallLimitAccessForDevelopment
       Rules:
         - Action:
-          Type: BLOCK
-          Priority: 10
-          RuleId: !Ref RateLimitWAFRuleName
-        - Action:
             Type: ALLOW
           Priority: 20
           RuleId: !Ref WafWhitelistRule
-
-  # Repeat IPs limitation
-  WafLimitACL:
-    Type: 'AWS::WAF::WebACL'
-    Properties:
-      Name: !Ref 'AWS::StackName'
-      DefaultAction:
-        Type: ALLOW
-      MetricName: RestrictRepeatAccess
-      Rules:
-        - Action:
-            Type: BLOCK
-          Priority: 10
-          RuleId: !Ref RateLimitWAFRuleName
 
   # ~~~~ Rules ~~~~
 
@@ -326,7 +304,7 @@ Resources:
 Outputs:
 
   TemplateVersion:
-    Value: 0.1.1
+    Value: 0.3.0
 
   CloudFrontURL:
     Description: URL of the newly created CloudFront
