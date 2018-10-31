@@ -1,3 +1,4 @@
+---
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: 'NCA4 Static site'
@@ -39,12 +40,12 @@ Mappings:
 
 Conditions:
 
-  # Limit IP for Development 
-  UseIPFirewall: !Equals [ 'true',  !Ref FirewallWebsiteForDevelopment ]
+  # Limit IP for Development
+  UseIPFirewall: !Equals ['true', !Ref FirewallWebsiteForDevelopment]
 
 Resources:
 
-  # ~~~ DevOps Automation Role ~~~ # Done firstpass
+  # ~~~ DevOps Automation Role ~~~
   DevOpsAutomationGroup:
     Type: 'AWS::IAM::Group'
     Properties:
@@ -85,9 +86,9 @@ Resources:
     Properties:
       DistributionConfig:
         Comment: !Sub '${AWS::StackName} Cloudfront Distribution'
-        WebACLId: !If [ UseIPFirewall, !Ref WafWebACL, !Ref WafLimitACL ]
+        WebACLId: !If [UseIPFirewall, !Ref WafWebACL, !Ref WafLimitACL]
         Origins:
-          - DomainName: !Select [ 2, !Split [ /, !GetAtt WebsiteBucket.WebsiteURL ] ]
+          - DomainName: !Select [2, !Split [/, !GetAtt WebsiteBucket.WebsiteURL]]
             Id: S3Origin
             CustomOriginConfig:
               HTTPPort: '80'
@@ -99,18 +100,18 @@ Resources:
         DefaultRootObject: index.html
         DefaultCacheBehavior:
           AllowedMethods:
-          - GET
-          - HEAD
+            - GET
+            - HEAD
           Compress: true
           TargetOriginId: S3Origin
-          MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
-          DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          MaxTTL: !FindInMap [Constants, ValueOf, CloudFrontTtlS3]
+          DefaultTTL: !FindInMap [Constants, ValueOf, CloudFrontTtlS3]
           ForwardedValues:
             QueryString: true
             Cookies:
               Forward: all
           ViewerProtocolPolicy: redirect-to-https
-        PriceClass: PriceClass_100 #PriceClass_All
+        PriceClass: PriceClass_100      # PriceClass_All
         ViewerCertificate:
           AcmCertificateArn: !Ref AcmCertificateArn
           SslSupportMethod: sni-only
@@ -126,7 +127,7 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - Id: ExpireLogs
-            ExpirationInDays: !FindInMap [ Constants, ValueOf, LogRetentionInDays ]
+            ExpirationInDays: !FindInMap [Constants, ValueOf, LogRetentionInDays]
             Status: Enabled
 
   # ~~~ Website content ~~~
@@ -134,7 +135,7 @@ Resources:
   WebsiteBucket:
     Type: 'AWS::S3::Bucket'
     DeletionPolicy: Retain
-    Properties: 
+    Properties:
       AccessControl: PublicRead
       BucketName: !Sub '${AWS::StackName}-website'
       WebsiteConfiguration:
@@ -147,71 +148,71 @@ Resources:
       Bucket: !Ref WebsiteBucket
       PolicyDocument:
         Statement:
-        - Sid: 'CloudFrontReadForGetBucketObjects'
-          Effect: Allow
-          Principal: '*'
-          Action: 's3:GetObject'
-          Resource: !Join ['', ['arn:aws:s3:::', !Ref 'WebsiteBucket', /*]]
-          Condition:
-            IpAddress:
-              aws:SourceIp:
-                # Pulled 10/31 from http://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips
-                - 52.124.128.0/17
-                - 54.230.0.0/16
-                - 54.239.128.0/18
-                - 99.84.0.0/16
-                - 205.251.192.0/19
-                - 54.239.192.0/19
-                - 70.132.0.0/18
-                - 13.32.0.0/15
-                - 13.35.0.0/16
-                - 204.246.172.0/23
-                - 204.246.164.0/22
-                - 204.246.168.0/22
-                - 71.152.0.0/17
-                - 216.137.32.0/19
-                - 205.251.249.0/24
-                - 99.86.0.0/16
-                - 52.46.0.0/18
-                - 52.84.0.0/15
-                - 64.252.64.0/18
-                - 204.246.174.0/23
-                - 205.251.254.0/24
-                - 143.204.0.0/16
-                - 205.251.252.0/23
-                - 204.246.176.0/20
-                - 13.249.0.0/16
-                - 54.240.128.0/18
-                - 205.251.250.0/23
-                - 52.222.128.0/17
-                - 54.182.0.0/16
-                - 54.192.0.0/16
-                - 13.124.199.0/24
-                - 34.226.14.0/24
-                - 52.82.128.0/19
-                - 52.15.127.128/26
-                - 35.158.136.0/24
-                - 52.57.254.0/24
-                - 18.216.170.128/25
-                - 13.54.63.128/26
-                - 13.59.250.0/26
-                - 13.210.67.128/26
-                - 35.167.191.128/26
-                - 52.47.139.0/24
-                - 52.199.127.192/26
-                - 52.212.248.0/26
-                - 52.66.194.128/26
-                - 13.113.203.0/24
-                - 34.195.252.0/24
-                - 35.162.63.192/26
-                - 52.56.127.0/25
-                - 13.228.69.0/24
-                - 34.216.51.0/25
-                - 54.233.255.128/26
-                - 52.52.191.128/26
-                - 52.78.247.128/26
-                - 52.220.191.0/26
-                - 34.232.163.208/29
+          - Sid: 'CloudFrontReadForGetBucketObjects'
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref 'WebsiteBucket', /*]]
+            Condition:
+              IpAddress:
+                aws:SourceIp:
+                  # Pulled 10/31 from http://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips
+                  - 52.124.128.0/17
+                  - 54.230.0.0/16
+                  - 54.239.128.0/18
+                  - 99.84.0.0/16
+                  - 205.251.192.0/19
+                  - 54.239.192.0/19
+                  - 70.132.0.0/18
+                  - 13.32.0.0/15
+                  - 13.35.0.0/16
+                  - 204.246.172.0/23
+                  - 204.246.164.0/22
+                  - 204.246.168.0/22
+                  - 71.152.0.0/17
+                  - 216.137.32.0/19
+                  - 205.251.249.0/24
+                  - 99.86.0.0/16
+                  - 52.46.0.0/18
+                  - 52.84.0.0/15
+                  - 64.252.64.0/18
+                  - 204.246.174.0/23
+                  - 205.251.254.0/24
+                  - 143.204.0.0/16
+                  - 205.251.252.0/23
+                  - 204.246.176.0/20
+                  - 13.249.0.0/16
+                  - 54.240.128.0/18
+                  - 205.251.250.0/23
+                  - 52.222.128.0/17
+                  - 54.182.0.0/16
+                  - 54.192.0.0/16
+                  - 13.124.199.0/24
+                  - 34.226.14.0/24
+                  - 52.82.128.0/19
+                  - 52.15.127.128/26
+                  - 35.158.136.0/24
+                  - 52.57.254.0/24
+                  - 18.216.170.128/25
+                  - 13.54.63.128/26
+                  - 13.59.250.0/26
+                  - 13.210.67.128/26
+                  - 35.167.191.128/26
+                  - 52.47.139.0/24
+                  - 52.199.127.192/26
+                  - 52.212.248.0/26
+                  - 52.66.194.128/26
+                  - 13.113.203.0/24
+                  - 34.195.252.0/24
+                  - 35.162.63.192/26
+                  - 52.56.127.0/25
+                  - 13.228.69.0/24
+                  - 34.216.51.0/25
+                  - 54.233.255.128/26
+                  - 52.52.191.128/26
+                  - 52.78.247.128/26
+                  - 52.220.191.0/26
+                  - 34.232.163.208/29
 
   # ~~~ Web Application Firewall ~~~
 
@@ -272,21 +273,21 @@ Resources:
       Name: !Sub '${AWS::StackName}-whitelist-ip-set'
       IPSetDescriptors:
         - Type: IPV4
-          Value: '199.223.30.254/32' # ICF IP Range
+          Value: '199.223.30.254/32'  # ICF IP Range
         - Type: IPV4
-          Value: '205.175.221.66/32' # NCO Office
+          Value: '205.175.221.66/32'  # NCO Office
         - Type: IPV4
-          Value: '198.85.226.0/24' # TSU IP Range
+          Value: '198.85.226.0/24'  # TSU IP Range
         - Type: IPV4
-          Value: '71.193.202.43/32' # Bradley Home IP
+          Value: '71.193.202.43/32'  # Bradley Home IP
         - Type: IPV6
-          Value: '2601:1c0:4501:311b:e59b:cd21:5d35:4761/128' # Bradley Home IP
+          Value: '2601:1c0:4501:311b:e59b:cd21:5d35:4761/128'  # Bradley Home IP
         - Type: IPV4
-          Value: '73.200.191.177/32' # Kat Home IP
+          Value: '73.200.191.177/32'  # Kat Home IP
 
   # ~~~ Alarms ~~~
 
-   CloudFront500Errors:
+  CloudFront500Errors:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
       AlarmDescription: 'CloudFront 500 Errors Too High'
@@ -300,10 +301,10 @@ Resources:
       AlarmActions:
         - !Ref EnvironmentNotificationsTopic
       Dimensions:
-      - Name: WebsiteCloudfrontName
-        Value: !Ref WebsiteCloudfront
+        - Name: WebsiteCloudfrontName
+          Value: !Ref WebsiteCloudfront
 
-   CloudFront400Errors:
+  CloudFront400Errors:
     Type: 'AWS::CloudWatch::Alarm'
     Properties:
       AlarmDescription: 'CloudFront 400 Errors Too High'
@@ -317,15 +318,15 @@ Resources:
       AlarmActions:
         - !Ref EnvironmentNotificationsTopic
       Dimensions:
-      - Name: WebsiteCloudfrontName
-        Value: !Ref WebsiteCloudfront
+        - Name: WebsiteCloudfrontName
+          Value: !Ref WebsiteCloudfront
 
-# ~~~ Outputs ~~~   
+# ~~~ Outputs ~~~
 
 Outputs:
 
   TemplateVersion:
-    Value: 0.1.0
+    Value: 0.1.1
 
   CloudFrontURL:
     Description: URL of the newly created CloudFront
