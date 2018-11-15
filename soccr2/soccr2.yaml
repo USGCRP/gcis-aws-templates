@@ -1,9 +1,13 @@
 ---
 AWSTemplateFormatVersion: "2010-09-09"
 
-Description: 'NCA4 Static site'
+Description: 'SOCCR2 Static site'
 
 Parameters:
+
+  WebsiteBucket:
+    Description: 'The AWS S3 bucket containing the site.'
+    Type: String
 
   AcmCertificateArn:
     Description: 'ACM Certificate ARN'
@@ -40,31 +44,6 @@ Conditions:
   UseIPFirewall: !Equals ['true', !Ref FirewallWebsiteForDevelopment]
 
 Resources:
-
-  # ~~~ DevOps Automation Role ~~~
-  DevOpsAutomationGroup:
-    Type: 'AWS::IAM::Group'
-    Properties:
-      GroupName: !Sub '${AWS::StackName}-DevOps-Automation'
-      Policies:
-        - PolicyName: 'DevOpsAutomationList'
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - 's3:ListBucket'
-                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}'
-        - PolicyName: 'DevOpsAutomationReadWrite'
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - 's3:GetObject'
-                  - 's3:PutObject'
-                  - 's3:DeleteObject'
-                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
 
   # ~~~ Notifications ~~~
 
@@ -127,15 +106,6 @@ Resources:
             Status: Enabled
 
   # ~~~ Website content ~~~
-
-  WebsiteBucket:
-    Type: 'AWS::S3::Bucket'
-    DeletionPolicy: Retain
-    Properties:
-      AccessControl: PublicRead
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: 404.html
 
   CloudFrontRestrictedBucketPolicy:
     Type: 'AWS::S3::BucketPolicy'
@@ -250,7 +220,7 @@ Resources:
       Name: !Sub '${AWS::StackName}-whitelist-ip-set'
       IPSetDescriptors:
         - Type: IPV4
-          Value: '199.223.30.254/32'  # ICF IP Range
+          Value: '199.223.30.254/32'  # ICF IP
         - Type: IPV4
           Value: '205.175.221.66/32'  # NCO Office
         - Type: IPV4
@@ -258,9 +228,13 @@ Resources:
         - Type: IPV4
           Value: '71.193.202.43/32'  # Bradley Home IP
         - Type: IPV6
-          Value: '2601:1c0:4501:311b:e59b:cd21:5d35:4761/128'  # Bradley Home IP
+          Value: '2601:1c0:4501:cd91::/64'  # Bradley Home IP
         - Type: IPV4
           Value: '73.200.191.177/32'  # Kat Home IP
+        - Type: IPV4
+          Value: '130.11.40.129/32' # USGS Dev
+        - Type: IPV4
+          Value: '74.96.156.111/32' # Gyami Home
 
   # ~~~ Alarms ~~~
 
@@ -303,12 +277,8 @@ Resources:
 Outputs:
 
   TemplateVersion:
-    Value: 0.3.0
+    Value: 0.1.0
 
-  CloudFrontURL:
-    Description: URL of the newly created CloudFront
+  CloudFront:
+    Description: ARN of the newly created CloudFront
     Value: !Ref WebsiteCloudfront
-
-  WebSiteBucketARN:
-    Description: ARN of the newly created website bucket
-    Value: !Sub 'arn:aws:s3:::${WebsiteBucket}'
