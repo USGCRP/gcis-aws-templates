@@ -1,0 +1,906 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: 'Static site with search'
+
+Parameters:
+
+  AcmCertificateArn:
+    Description: 'ACM Certificate ARN'
+    Type: String
+
+  AcmAlias:
+    Description: 'Domain alias used on certificate'
+    Type: String
+
+  AdminNotifyEmail:
+    Description: 'Notification email for application environment events'
+    Type: String
+
+  EC2KeyPair:
+    Description: 'The SSH key used to access the search server'
+    Type: AWS::EC2::KeyPair::KeyName
+
+  PublicSubnet1:
+    Description: 'Subnet on which the load balancer will be provisioned'
+    Type: String
+
+  PublicSubnet2:
+    Description: 'Subnet on which the load balancer will be provisioned'
+    Type: String
+
+  PrivateSubnet1:
+    Description: 'Subnet on which the search server will be provisioned'
+    Type: String
+
+  PrivateSubnet2:
+    Description: 'Subnet on which the search server will be provisioned'
+    Type: String
+
+  UseWebApplicationFirewall:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: false
+
+  VpcId:
+    Description: 'VPC ID'
+    Type: String
+
+  VpcCIDR:
+    Description: 'VPC CIDR Block'
+    Type: String
+
+Mappings:
+
+  # Environment configuration settings
+  Constants:
+    ValueOf:
+      AsgCooldown: 60
+      AsgDesiredSize: 1
+      AsgMinSize: 1
+      AsgMaxSize: 1
+      CloudFrontTtlS3: 15
+      CloudFrontTtlSearch: 15
+      EbsVolSizeInGb: 10
+      FessVersion: '11.4.2'
+      LogRetentionInDays: 365
+      SearchServerInstanceType: 't2.large'
+
+  # https://aws.amazon.com/amazon-linux-ami/
+  AmiRegionMap:
+    us-east-1:
+      AMI: ami-8c1be5f6
+    us-east-2:
+      AMI: ami-c5062ba0
+
+Conditions:
+
+  IsGovCloud: !Equals [ us-gov-west-1, !Ref 'AWS::Region' ]
+
+  UseFirewall: !Equals [ 'true',  !Ref UseWebApplicationFirewall ]
+
+Resources:
+
+  # ~~~ DevOps Automation Role ~~~
+
+  DevOpsAutomationGroup:
+    Type: 'AWS::IAM::Group'
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-DevOps-Automation'
+      Policies:
+        - PolicyName: 'DevOpsAutomationList'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}'
+        - PolicyName: 'DevOpsAutomationReadWrite'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
+
+  # ~~~ Notifications ~~~
+
+  EnvironmentNotificationsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+        - Endpoint: !Ref AdminNotifyEmail
+          Protocol: email
+
+  # ~~~ CloudFront Distribution ~~~
+
+  WebsiteCloudfront:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: 'Search Site Cloudfront Distribution'
+        WebACLId: !If [ UseFirewall, !Ref WafWebACL, !Ref 'AWS::NoValue' ]
+        Origins:
+          - DomainName: !Select [ 2, !Split [ /, !GetAtt WebsiteBucket.WebsiteURL ] ]
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: '80'
+              OriginProtocolPolicy: http-only
+          - DomainName: !GetAtt LoadBalancer.DNSName
+            Id: SearchServer
+            CustomOriginConfig:
+              HTTPPort: '80'
+              OriginProtocolPolicy: http-only
+        CacheBehaviors:
+          - PathPattern: 'fess*'
+            TargetOriginId: 'SearchServer'
+            Compress: true
+            MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlSearch ]
+            DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlSearch ]
+            ViewerProtocolPolicy: allow-all
+            ForwardedValues:
+              QueryString: true
+        Enabled: true
+        Aliases:
+          - !Ref AcmAlias
+        HttpVersion: 'http2'
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - GET
+          - HEAD
+          Compress: true
+          TargetOriginId: S3Origin
+          MaxTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          DefaultTTL: !FindInMap [ Constants, ValueOf, CloudFrontTtlS3 ]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100 #PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref AcmCertificateArn
+          SslSupportMethod: sni-only
+        Logging:
+          Bucket: !GetAtt LoggingBucket.DomainName
+
+  # ~~~ Logging ~~~
+
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            ExpirationInDays: !FindInMap [ Constants, ValueOf, LogRetentionInDays ]
+            Status: Enabled
+
+  # ~~~ Website content ~~~
+
+  WebsiteBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+
+  CloudFrontRestrictedBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+        - Sid: 'CloudFrontReadForGetBucketObjects'
+          Effect: Allow
+          Principal: '*'
+          Action: 's3:GetObject'
+          Resource: !Join ['', ['arn:aws:s3:::', !Ref 'WebsiteBucket', /*]]
+          Condition:
+            IpAddress:
+              aws:SourceIp:
+                # http://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips
+                - 13.32.0.0/15
+                - 52.46.0.0/18
+                - 52.84.0.0/15
+                - 52.222.128.0/17
+                - 54.182.0.0/16
+                - 54.192.0.0/16
+                - 54.230.0.0/16
+                - 54.239.128.0/18
+                - 54.239.192.0/19
+                - 54.240.128.0/18
+                - 204.246.164.0/22
+                - 204.246.168.0/22
+                - 204.246.174.0/23
+                - 204.246.176.0/20
+                - 205.251.192.0/19
+                - 205.251.249.0/24
+                - 205.251.250.0/23
+                - 205.251.252.0/23
+                - 205.251.254.0/24
+                - 216.137.32.0/19
+                - 13.54.63.128/26
+                - 13.59.250.0/26
+                - 13.113.203.0/24
+                - 13.124.199.0/24
+                - 13.228.69.0/24
+                - 34.195.252.0/24
+                - 34.226.14.0/24
+                - 34.232.163.208/29
+                - 35.158.136.0/24
+                - 35.162.63.192/26
+                - 35.167.191.128/26
+                - 52.15.127.128/26
+                - 52.52.191.128/26
+                - 52.56.127.0/25
+                - 52.57.254.0/24
+                - 52.66.194.128/26
+                - 52.78.247.128/26
+                - 52.199.127.192/26
+                - 52.212.248.0/26
+                - 52.220.191.0/26
+                - 54.233.255.128/26
+
+  # ~~~ Configuration storage ~~~
+
+  ConfigBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+
+  ConfigBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Statement:
+          - Sid: 'Enforce HTTPS Connections'
+            Action: 's3:*'
+            Effect: Deny
+            Principal: '*'
+            Resource: !Sub
+              - arn:${Partition}:s3:::${ConfigBucket}/*
+              - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: 'DenyUnEncryptedObjectUploads'
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Sub
+              - arn:${Partition}:s3:::${ConfigBucket}/*
+              - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+            Condition:
+              StringNotEquals:
+                s3:x-amz-server-side-encryption: AES256
+
+  # ~~~ Search server ~~~
+
+  SearchServerLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: !FindInMap [ Constants, ValueOf, LogRetentionInDays ]
+
+  SearchServerProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref SearchServerRole
+
+  SearchServerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Policies:
+        - PolicyName: CloudWatchInstanceMonitoring
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'cloudwatch:ListMetrics'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+        - PolicyName: 'ListAllBuckets'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetBucketLocation'
+                  - 's3:ListAllMyBuckets'
+                Resource: '*'
+        - PolicyName: 'ConfigBucket'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub '${ConfigBucket.Arn}/*'
+        - PolicyName: 'CloudWatchLogs'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogStreams'
+                Resource: !Sub
+                  - 'arn:${Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${SearchServerLogGroup}:*'
+                  - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          -
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  SearchServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Search Server Access'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref VpcCIDR
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref VpcCIDR
+
+  SearchServerSshAccess:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref SearchServerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: '0.0.0.0/0'
+
+  AutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: !FindInMap [ Constants, ValueOf, AsgMinSize ]
+      MaxSize: !FindInMap [ Constants, ValueOf, AsgMaxSize ]
+      DesiredCapacity: !FindInMap [ Constants, ValueOf, AsgDesiredSize ]
+      Cooldown: !FindInMap [ Constants, ValueOf, AsgCooldown ]
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      NotificationConfigurations:
+        - TopicARN:
+            Ref: EnvironmentNotificationsTopic
+          NotificationTypes:
+          - 'autoscaling:EC2_INSTANCE_LAUNCH'
+          - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+      Tags:
+      - PropagateAtLaunch: true
+        Value: 'Search Server'
+        Key: Name
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
+
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      KeyName: !Ref EC2KeyPair
+      ImageId: !FindInMap [ AmiRegionMap, !Ref 'AWS::Region', AMI ]
+      SecurityGroups:
+        - !Ref SearchServerSecurityGroup
+      InstanceType: !FindInMap [ Constants, ValueOf, SearchServerInstanceType ]
+      IamInstanceProfile: !Ref SearchServerProfile
+      AssociatePublicIpAddress: false
+      BlockDeviceMappings:
+        - DeviceName: '/dev/sdf'
+          Ebs:
+            VolumeSize: !FindInMap [ Constants, ValueOf, EbsVolSizeInGb ]
+            VolumeType: 'gp2'
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          commands:
+            '01_update':
+              command: 'yum -y update'
+            '02_disk':
+              command: '/tmp/mount-disk.sh'
+            '03_monitoring':
+              command: '/tmp/config-monitoring'
+            '04_fess':
+              command: '/tmp/install-fess'
+          files:
+            '/tmp/mount-disk.sh':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                parted /dev/xvdf mklabel gpt
+                parted -a opt /dev/xvdf mkpart primary 0% 100%
+                mkfs.ext4 /dev/xvdf1
+                mkdir /opt/fess
+                echo "/dev/xvdf1  /opt/fess  ext4 defaults  0 0" >> /etc/fstab
+                mount -a
+            '/tmp/cloudwatchlog.conf':
+              content: !Sub |
+                [general]
+                state_file = /var/awslogs/state/agent-state
+                use_gzip_http_content_encoding = true
+                logging_config_file = /var/awslogs/etc/awslogs.conf
+                [/var/log/audit/audit.log]
+                file = /var/log/audit/audit.log
+                log_stream_name = {instance_id}-/var/log/audit/audit.log
+                log_group_name = ${SearchServerLogGroup}
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}-/var/log/messages
+                log_group_name = ${SearchServerLogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}-/var/log/secure
+                log_group_name = ${SearchServerLogGroup}
+                [/opt/fess/logs/audit.log]
+                file = /opt/fess/logs/audit.log
+                log_stream_name = {instance_id}-/opt/fess/logs/audit.log
+                log_group_name = ${SearchServerLogGroup}
+                [/opt/fess/logs/fess.log]
+                file = /opt/fess/logs/fess.log
+                log_stream_name = {instance_id}-/opt/fess/logs/fess.log
+                log_group_name = ${SearchServerLogGroup}
+                [/opt/fess/logs/server_0.log]
+                file = /opt/fess/logs/server_0.log
+                log_stream_name = {instance_id}-/opt/fess/logs/server_0.log
+                log_group_name = ${SearchServerLogGroup}
+            '/tmp/config-monitoring':
+              mode: '000755'
+              content: !Sub |
+                #!/usr/bin/env bash
+                yum -y install perl-Switch perl-DateTime perl-Sys-Syslog perl-LWP-Protocol-https
+                cd /opt
+                curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O
+                unzip -q CloudWatchMonitoringScripts-1.2.1.zip
+                rm CloudWatchMonitoringScripts-1.2.1.zip
+                curl https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O
+                python ./awslogs-agent-setup.py -n --region ${AWS::Region} -c /tmp/cloudwatchlog.conf
+                rm -f ./awslogs-agent-setup.py
+            '/tmp/install-fess':
+              mode: '000755'
+              content:
+                Fn::Sub:
+                  - |
+                    #!/usr/bin/env bash
+                    yum -y install curl java-1.8.0-openjdk
+                    /usr/sbin/alternatives --set java /usr/lib/jvm/jre-1.8.0-openjdk.x86_64/bin/java
+                    cd /opt/fess
+                    curl -LO https://github.com/codelibs/fess/releases/download/fess-${LocalFessVersion}/fess-${LocalFessVersion}.zip
+                    unzip -q fess-${LocalFessVersion}.zip; rm -f fess-${LocalFessVersion}.zip
+                    mv fess-${LocalFessVersion}/* .
+                    rmdir fess-${LocalFessVersion}
+                    ADMIN_USER_CONFIG_FILE='/opt/fess/app/WEB-INF/classes/fess_indices/.fess_user/user.bulk'
+                    ADMIN_PWD=$(head -c 20 /dev/urandom | base64 | head -c 16)
+                    echo $ADMIN_PWD > /opt/fess/DEFAULT_PWD.txt
+                    sed -i "s/8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918/$(echo -n $ADMIN_PWD | shasum -a 256 | awk '{print $1}')/g" $ADMIN_USER_CONFIG_FILE
+                    adduser fess
+                    chown -R fess.fess /opt/fess
+                    runuser -l fess -c '/opt/fess/bin/fess -Dfess.context.path="/fess" -d'
+                  - {
+                      LocalFessVersion: !FindInMap [ Constants, ValueOf, FessVersion ]
+                    }
+            '/etc/cron.d/cloudwatch':
+              mode: '000644'
+              content: |
+                */5 * * * * root /opt/aws-scripts-mon/mon-put-instance-data.pl --auto-scaling --mem-used-incl-cache-buff --mem-util --disk-space-util --disk-path=/ --disk-path=/opt/fess --from-cron
+            '/etc/cron.d/updates':
+              mode: '000644'
+              content: |
+                15 * * * * root yum -y update
+
+  SearchServerCpuAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Search Server CPU Alarm'
+      Namespace: 'AWS/EC2'
+      MetricName: 'CPUUtilization'
+      Statistic: 'Average'
+      Period: '300'
+      EvaluationPeriods: '2'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '70'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref AutoScalingGroup
+
+  SearchServerMemoryAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Search Server Memory Alarm'
+      Namespace: 'System/Linux'
+      MetricName: 'MemoryUtilization'
+      Statistic: 'Average'
+      Period: '300'
+      EvaluationPeriods: '2'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '80'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref AutoScalingGroup
+
+  SearchServerRootVolumeAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Search Server Root Volume Alarm'
+      Namespace: 'System/Linux'
+      MetricName: 'DiskSpaceUtilization'
+      Statistic: 'Maximum'
+      Period: '300'
+      EvaluationPeriods: '1'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '70'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref AutoScalingGroup
+      - Name: Filesystem
+        Value: '/dev/xvda1'
+      - Name: MountPath
+        Value: '/'
+
+  SearchServerIndexVolumeAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Search Server Index Volume Alarm'
+      Namespace: 'System/Linux'
+      MetricName: 'DiskSpaceUtilization'
+      Statistic: 'Maximum'
+      Period: '300'
+      EvaluationPeriods: '1'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '70'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+      - Name: AutoScalingGroupName
+        Value: !Ref AutoScalingGroup
+      - Name: Filesystem
+        Value: '/dev/xvdf1'
+      - Name: MountPath
+        Value: '/opt/fess'
+
+  # ~~~ Load Balancer ~~~
+
+  LoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref LbSecurityGroup
+
+  LbSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Search Server Access'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress: #TODO: Seemingly no easy way to turn a CSV list into SG rules?
+        # Open from anywhere
+#        - IpProtocol: tcp
+#          FromPort: 80
+#          ToPort: 80
+#          CidrIp: '0.0.0.0/0'
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.32.0.0/15'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.46.0.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.84.0.0/15'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.222.128.0/17'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.182.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.192.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.230.0.0/16'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.239.128.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.239.192.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.240.128.0/18'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.164.0/22'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.168.0/22'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.174.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '204.246.176.0/20'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.192.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.249.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.250.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.252.0/23'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '205.251.254.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '216.137.32.0/19'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.54.63.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.59.250.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.113.203.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.124.199.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '13.228.69.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.195.252.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.226.14.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '34.232.163.208/29'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.158.136.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.162.63.192/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '35.167.191.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.15.127.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.52.191.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.56.127.0/25'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.57.254.0/24'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.66.194.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.78.247.128/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.199.127.192/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.212.248.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '52.220.191.0/26'
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '54.233.255.128/26'
+
+  LbListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  TargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 8080
+      Protocol: HTTP
+      Matcher:
+        HttpCode: 200-299
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /fess
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 30
+
+  ListenerRule:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      ListenerArn: !Ref LbListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+
+  # ~~~ Web Application Firewall ~~~
+
+  WafWebACL:
+    Type: 'AWS::WAF::WebACL'
+    Condition: UseFirewall
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      DefaultAction:
+        Type: BLOCK
+      MetricName: SecurityAutomationsMaliciousRequesters
+      Rules:
+        - Action:
+            Type: ALLOW
+          Priority: 10
+          RuleId: !Ref WafWhitelistRule
+
+  WafWhitelistRule:
+    Type: 'AWS::WAF::Rule'
+    Condition: UseFirewall
+    Properties:
+      Name: !Sub '${AWS::StackName}-whitelist-rule'
+      MetricName: SecurityAutomationsWhitelistRule
+      Predicates:
+        - DataId: !Ref WafWhiteListIpSet
+          Negated: false
+          Type: IPMatch
+
+  WafWhiteListIpSet:
+    Type: 'AWS::WAF::IPSet'
+    Condition: UseFirewall
+    Properties:
+      Name: !Sub '${AWS::StackName}-whitelist-ip-set'
+      IPSetDescriptors:
+        - Type: IPV4
+          Value: '199.223.30.254/32' # ICF
+        - Type: IPV4
+          Value: '205.175.221.66/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.67/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.68/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.69/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.70/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.71/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.72/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.73/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.74/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.75/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.76/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.77/32' # NCO Office
+        - Type: IPV4
+          Value: '205.175.221.78/32' # NCO Office
+        - Type: IPV4
+          Value: '198.85.226.0/24' # TSU
+        - Type: IPV4
+          Value: '108.15.27.166/32' # Bradley
+          
+Outputs:
+
+  TemplateVersion:
+    Value: 0.0.4
