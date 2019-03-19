@@ -666,8 +666,8 @@ Resources:
                 echo "Stopping GCIS"
                 /usr/local/bin/gcis_stop
 
-                echo "Letting GCIS stop, waiting 5 seconds."
-                sleep 5
+                echo "Letting GCIS stop, waiting 15 seconds."
+                sleep 15
 
                 echo "Reseting the database"
                 dropdb -U gcisops -p ${AppDB.Outputs.Port} -h ${AppDB.Outputs.HostName} gcis

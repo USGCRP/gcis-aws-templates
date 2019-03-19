@@ -788,6 +788,7 @@ Resources:
                 aws s3 --region $REGION cp s3://$BUCKET/database/latest/latest_gcis_database.tar.gz /tmp/gcis_data
 
                 /usr/local/bin/gcis_stop
+                sleep 15
 
                 dropdb gcis
                 createdb gcis
