@@ -1,0 +1,312 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: 'NOAA State Summaries 2019 Static site'
+
+Parameters:
+
+  AcmCertificateArn:
+    Description: 'ACM Certificate ARN'
+    Type: String
+
+  AcmAlias:
+    Description: 'Domain alias used on certificate'
+    Type: String
+
+  AdminNotifyEmail:
+    Description: 'Notification email for application environment events'
+    Type: String
+
+  FirewallWebsiteForDevelopment:
+    Description: 'Use IP whitelist restrictions rules'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: false
+
+Mappings:
+
+  # Environment configuration settings
+  Constants:
+    ValueOf:
+      CloudFrontTtlS3: 15
+      CloudFrontTtlSearch: 15
+      LogRetentionInDays: 365
+
+Conditions:
+
+  # Limit IP for Development
+  UseIPFirewall: !Equals ['true', !Ref FirewallWebsiteForDevelopment]
+
+Resources:
+
+  # ~~~ DevOps Automation Role ~~~
+  DevOpsAutomationGroup:
+    Type: 'AWS::IAM::Group'
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-DevOps-Automation'
+      Policies:
+        - PolicyName: 'DevOpsAutomationList'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}'
+        - PolicyName: 'DevOpsAutomationReadWrite'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:DeleteObject'
+                Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
+
+  # ~~~ Notifications ~~~
+
+  EnvironmentNotificationsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+        - Endpoint: !Ref AdminNotifyEmail
+          Protocol: email
+
+  # ~~~ CloudFront Distribution ~~~
+
+  WebsiteCloudfront:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${AWS::StackName} Cloudfront Distribution'
+        WebACLId: !If [UseIPFirewall, !Ref WafWebACL, !Ref 'AWS::NoValue']
+        Origins:
+          - DomainName: !Select [2, !Split [/, !GetAtt WebsiteBucket.WebsiteURL]]
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: '80'
+              OriginProtocolPolicy: http-only
+        Enabled: true
+        Aliases:
+          - !Ref AcmAlias
+        HttpVersion: 'http2'
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          TargetOriginId: S3Origin
+          MaxTTL: !FindInMap [Constants, ValueOf, CloudFrontTtlS3]
+          DefaultTTL: !FindInMap [Constants, ValueOf, CloudFrontTtlS3]
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100      # PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref AcmCertificateArn
+          SslSupportMethod: sni-only
+        Logging:
+          Bucket: !GetAtt LoggingBucket.DomainName
+
+  # ~~~ Logging ~~~
+
+  LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireLogs
+            ExpirationInDays: !FindInMap [Constants, ValueOf, LogRetentionInDays]
+            Status: Enabled
+
+  # ~~~ Website content ~~~
+
+  WebsiteBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: 404.html
+
+  CloudFrontRestrictedBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: 'CloudFrontReadForGetBucketObjects'
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref 'WebsiteBucket', /*]]
+            Condition:
+              IpAddress:
+                aws:SourceIp:
+                  # Pulled 10/31 from http://d7uri8nf7uskq.cloudfront.net/tools/list-cloudfront-ips
+                  - 52.124.128.0/17
+                  - 54.230.0.0/16
+                  - 54.239.128.0/18
+                  - 99.84.0.0/16
+                  - 205.251.192.0/19
+                  - 54.239.192.0/19
+                  - 70.132.0.0/18
+                  - 13.32.0.0/15
+                  - 13.35.0.0/16
+                  - 204.246.172.0/23
+                  - 204.246.164.0/22
+                  - 204.246.168.0/22
+                  - 71.152.0.0/17
+                  - 216.137.32.0/19
+                  - 205.251.249.0/24
+                  - 99.86.0.0/16
+                  - 52.46.0.0/18
+                  - 52.84.0.0/15
+                  - 64.252.64.0/18
+                  - 204.246.174.0/23
+                  - 205.251.254.0/24
+                  - 143.204.0.0/16
+                  - 205.251.252.0/23
+                  - 204.246.176.0/20
+                  - 13.249.0.0/16
+                  - 54.240.128.0/18
+                  - 205.251.250.0/23
+                  - 52.222.128.0/17
+                  - 54.182.0.0/16
+                  - 54.192.0.0/16
+                  - 13.124.199.0/24
+                  - 34.226.14.0/24
+                  - 52.82.128.0/19
+                  - 52.15.127.128/26
+                  - 35.158.136.0/24
+                  - 52.57.254.0/24
+                  - 18.216.170.128/25
+                  - 13.54.63.128/26
+                  - 13.59.250.0/26
+                  - 13.210.67.128/26
+                  - 35.167.191.128/26
+                  - 52.47.139.0/24
+                  - 52.199.127.192/26
+                  - 52.212.248.0/26
+                  - 52.66.194.128/26
+                  - 13.113.203.0/24
+                  - 34.195.252.0/24
+                  - 35.162.63.192/26
+                  - 52.56.127.0/25
+                  - 13.228.69.0/24
+                  - 34.216.51.0/25
+                  - 54.233.255.128/26
+                  - 52.52.191.128/26
+                  - 52.78.247.128/26
+                  - 52.220.191.0/26
+                  - 34.232.163.208/29
+
+  # ~~~ Web Application Firewall ~~~
+
+  # ~~~~ ACLs ~~~~
+
+  # Developer Only IP limitation
+  WafWebACL:
+    Type: 'AWS::WAF::WebACL'
+    Condition: UseIPFirewall
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      DefaultAction:
+        Type: BLOCK
+      MetricName: FirewallLimitAccessForDevelopment
+      Rules:
+        - Action:
+            Type: ALLOW
+          Priority: 20
+          RuleId: !Ref WafWhitelistRule
+
+  # ~~~~ Rules ~~~~
+
+  WafWhitelistRule:
+    Type: 'AWS::WAF::Rule'
+    Condition: UseIPFirewall
+    Properties:
+      Name: !Sub '${AWS::StackName}-whitelist-rule'
+      MetricName: SecurityAutomationsWhitelistRule
+      Predicates:
+        - DataId: !Ref WafWhiteListIpSet
+          Negated: false
+          Type: IPMatch
+
+  # ~~~~ Other WAF Components ~~~~
+
+  WafWhiteListIpSet:
+    Type: 'AWS::WAF::IPSet'
+    Condition: UseIPFirewall
+    Properties:
+      Name: !Sub '${AWS::StackName}-whitelist-ip-set'
+      IPSetDescriptors:
+        - Type: IPV4
+          Value: '199.223.30.254/32'  # ICF IP Range
+        - Type: IPV4
+          Value: '205.175.221.66/32'  # NCO Office
+        - Type: IPV4
+          Value: '198.85.226.0/24'  # TSU IP Range
+        - Type: IPV4
+          Value: '73.96.204.229/32'  # Bradley Home IP
+        - Type: IPV6
+          Value: '2601:1c0:4501:cd91::/64'  # Bradley Home IP
+
+  # ~~~ Alarms ~~~
+
+  CloudFront500Errors:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'CloudFront 500 Errors Too High'
+      Namespace: 'AWS/CloudFront'
+      MetricName: '5xxErrorRate'
+      Statistic: 'Average'
+      Period: '300'
+      EvaluationPeriods: '2'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '5'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+        - Name: WebsiteCloudfrontName
+          Value: !Ref WebsiteCloudfront
+
+  CloudFront400Errors:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'CloudFront 400 Errors Too High'
+      Namespace: 'AWS/CloudFront'
+      MetricName: '4xxErrorRate'
+      Statistic: 'Average'
+      Period: '300'
+      EvaluationPeriods: '2'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: '10'
+      AlarmActions:
+        - !Ref EnvironmentNotificationsTopic
+      Dimensions:
+        - Name: WebsiteCloudfrontName
+          Value: !Ref WebsiteCloudfront
+
+# ~~~ Outputs ~~~
+
+Outputs:
+
+  TemplateVersion:
+    Value: 1.0.0
+
+  CloudFrontURL:
+    Description: URL of the newly created CloudFront
+    Value: !Ref WebsiteCloudfront
+
+  WebSiteBucketARN:
+    Description: ARN of the newly created website bucket
+    Value: !Sub 'arn:aws:s3:::${WebsiteBucket}'
